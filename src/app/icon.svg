@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b101b"/>
+      <stop offset="100%" stop-color="#141c2b"/>
+    </linearGradient>
+    <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b6ff5"/>
+      <stop offset="100%" stop-color="#144ee3"/>
+    </linearGradient>
+    <linearGradient id="g2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d64a80"/>
+      <stop offset="100%" stop-color="#eb568e"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="108" fill="url(#bg)"/>
+  <!-- Top-left link -->
+  <rect x="108" y="108" width="200" height="200" rx="64" fill="none" stroke="url(#g1)" stroke-width="48" transform="rotate(-45 208 208)"/>
+  <!-- Bottom-right link -->
+  <rect x="204" y="204" width="200" height="200" rx="64" fill="none" stroke="url(#g2)" stroke-width="48" transform="rotate(-45 304 304)"/>
+  <!-- Overlap mask: clear the intersection so they look interlocked -->
+  <rect x="228" y="228" width="56" height="56" rx="4" fill="url(#bg)" transform="rotate(-45 256 256)"/>
+</svg>
