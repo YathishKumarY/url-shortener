@@ -51,7 +51,7 @@ export async function GET(request: Request, ctx: RouteContext<"/api/links/[id]/s
 
     const [
       totalClicks,
-      uniqueVisitorResult,
+      uniqueVisitorRows,
       clicksByDate,
       referrerGroups,
       deviceGroups,
@@ -60,18 +60,29 @@ export async function GET(request: Request, ctx: RouteContext<"/api/links/[id]/s
     ] = await Promise.all([
       prisma.click.count({ where: whereClause }),
 
-      prisma.click.findMany({
-        where: { ...whereClause, ipHash: { not: null } },
-        select: { ipHash: true },
-        distinct: ["ipHash"],
-      }),
+      // Count distinct hashes in the database instead of streaming every
+      // distinct row into memory, which grew without bound for popular links.
+      prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(DISTINCT "ipHash")::bigint AS count
+        FROM "Click"
+        WHERE "linkId" = ${id}
+          AND "timestamp" >= ${since}
+          AND "ipHash" IS NOT NULL
+      `,
 
-      prisma.click.groupBy({
-        by: ["timestamp"],
-        where: whereClause,
-        _count: true,
-        orderBy: { timestamp: "asc" },
-      }),
+      // Bucket by calendar day in SQL. Grouping by the raw `timestamp` column
+      // returned one row per click (timestamps are millisecond-precise), so
+      // the chart received thousands of single-click points instead of a
+      // per-day series.
+      prisma.$queryRaw<Array<{ date: string; clicks: bigint }>>`
+        SELECT to_char(date_trunc('day', "timestamp"), 'YYYY-MM-DD') AS date,
+               COUNT(*)::bigint AS clicks
+        FROM "Click"
+        WHERE "linkId" = ${id}
+          AND "timestamp" >= ${since}
+        GROUP BY 1
+        ORDER BY 1 ASC
+      `,
 
       prisma.click.groupBy({
         by: ["referrer"],
@@ -106,14 +117,10 @@ export async function GET(request: Request, ctx: RouteContext<"/api/links/[id]/s
       }),
     ]);
 
-    const dateMap = new Map<string, number>();
-    for (const row of clicksByDate) {
-      const date = row.timestamp.toISOString().split("T")[0];
-      dateMap.set(date, (dateMap.get(date) ?? 0) + row._count);
-    }
-    const clicksOverTime = Array.from(dateMap.entries())
-      .map(([date, clicks]) => ({ date, clicks }))
-      .sort((a, b) => a.date.localeCompare(b.date));
+    const clicksOverTime = clicksByDate.map((row) => ({
+      date: row.date,
+      clicks: Number(row.clicks),
+    }));
 
     return NextResponse.json({
       clicksOverTime,
@@ -134,7 +141,7 @@ export async function GET(request: Request, ctx: RouteContext<"/api/links/[id]/s
         clicks: c._count,
       })),
       totalClicks,
-      uniqueVisitors: uniqueVisitorResult.length,
+      uniqueVisitors: Number(uniqueVisitorRows[0]?.count ?? 0),
     });
   } catch (error) {
     console.error("[stats] Failed to fetch analytics:", error);

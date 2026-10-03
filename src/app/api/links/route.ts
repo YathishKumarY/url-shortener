@@ -1,10 +1,22 @@
 import { NextResponse } from "next/server";
+import { buildShortUrl } from "@/lib/app-url";
 import { auth } from "@/lib/auth";
 import { generateShortCode } from "@/lib/nanoid";
 import { prisma } from "@/lib/prisma";
 import { createLinkLimiter, getClientIp } from "@/lib/rate-limit";
 import { redis } from "@/lib/redis";
 import { createLinkSchema, linkQuerySchema, formatZodErrors } from "@/lib/validators";
+
+const CACHE_TTL_SECONDS = 86400;
+
+/**
+ * Detect a unique-constraint violation by Prisma's error code rather than by
+ * matching on the message text, which is not part of Prisma's stable API and
+ * changes with locale and version.
+ */
+function isUniqueConstraintError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "code" in err && err.code === "P2002";
+}
 
 export async function POST(request: Request) {
   const ip = getClientIp(request);
@@ -43,28 +55,11 @@ export async function POST(request: Request) {
 
   const { url, customAlias, expiresAt } = parsed.data;
 
-  try {
-    new URL(url);
-  } catch {
-    return NextResponse.json({ error: "Invalid URL format" }, { status: 400 });
-  }
-
-  const protocol = new URL(url).protocol;
-  if (!["http:", "https:"].includes(protocol)) {
-    return NextResponse.json({ error: "Only http and https URLs are allowed" }, { status: 400 });
-  }
-
   const session = await auth();
   const userId = session?.user?.id ?? null;
 
   try {
-    let shortCode: string;
-
-    if (customAlias) {
-      shortCode = customAlias;
-    } else {
-      shortCode = generateShortCode();
-    }
+    let shortCode: string = customAlias ? customAlias : generateShortCode();
 
     let link;
     let attempts = 0;
@@ -83,16 +78,12 @@ export async function POST(request: Request) {
         });
         break;
       } catch (err: unknown) {
-        const isUniqueViolation = err instanceof Error && err.message.includes("Unique constraint");
-        if (isUniqueViolation && customAlias) {
+        if (!isUniqueConstraintError(err)) throw err;
+        if (customAlias) {
           return NextResponse.json({ error: "This alias is already taken" }, { status: 409 });
         }
-        if (isUniqueViolation && !customAlias) {
-          shortCode = generateShortCode();
-          attempts++;
-          continue;
-        }
-        throw err;
+        shortCode = generateShortCode();
+        attempts++;
       }
     }
 
@@ -103,19 +94,29 @@ export async function POST(request: Request) {
       );
     }
 
-    try {
-      await redis.set(`link:${shortCode}`, url, { ex: 86400 });
-    } catch (err) {
-      console.error("[links] Redis cache set failed:", err);
+    const expiresAtMs = link.expiresAt ? new Date(link.expiresAt).getTime() : null;
+    const ttl = expiresAtMs
+      ? Math.min(CACHE_TTL_SECONDS, Math.ceil((expiresAtMs - Date.now()) / 1000))
+      : CACHE_TTL_SECONDS;
+    if (ttl > 0) {
+      try {
+        // Same shape the redirect handler expects, so it can honour expiry
+        // without a database round trip.
+        await redis.set(
+          `link:${link.shortCode}`,
+          JSON.stringify({ id: link.id, originalUrl: url, expiresAt: expiresAtMs }),
+          { ex: ttl },
+        );
+      } catch (err) {
+        console.error("[links] Redis cache set failed:", err);
+      }
     }
-
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
     return NextResponse.json(
       {
         id: link.id,
         shortCode: link.shortCode,
-        shortUrl: `${appUrl}/${link.shortCode}`,
+        shortUrl: buildShortUrl(link.shortCode, request),
         originalUrl: link.originalUrl,
         createdAt: link.createdAt,
       },
@@ -123,7 +124,10 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     console.error("[links] Failed to create link:", error);
-    return NextResponse.json({ status: 500 });
+    return NextResponse.json(
+      { error: "Failed to create link. Please try again." },
+      { status: 500 },
+    );
   }
 }
 
@@ -136,7 +140,8 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const parsed = linkQuerySchema.safeParse({
     page: searchParams.get("page") ?? "1",
-    limit: searchParams.get("limit") ?? "20",
+    // Accept `pageSize` as an alias for `limit` so either naming works.
+    limit: searchParams.get("limit") ?? searchParams.get("pageSize") ?? "20",
     search: searchParams.get("search") ?? undefined,
   });
 
@@ -170,7 +175,9 @@ export async function GET(request: Request) {
       prisma.link.count({ where }),
     ]);
 
-    return NextResponse.json({ links, total, page, limit });
+    // `pageSize` mirrors `limit` so clients using either name agree with the
+    // value actually applied to the query.
+    return NextResponse.json({ links, total, page, limit, pageSize: limit });
   } catch (error) {
     console.error("[links] Failed to fetch links:", error);
     return NextResponse.json(

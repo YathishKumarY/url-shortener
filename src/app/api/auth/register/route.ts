@@ -2,10 +2,23 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { sendVerificationEmail } from "@/lib/email";
 import { prisma } from "@/lib/prisma";
+import { authLimiter, getClientIp } from "@/lib/rate-limit";
 import { generateEmailVerificationToken } from "@/lib/tokens";
 import { registerSchema, formatZodErrors } from "@/lib/validators";
 
 export async function POST(request: Request) {
+  try {
+    const { success } = await authLimiter.limit(`register:${getClientIp(request)}`);
+    if (!success) {
+      return NextResponse.json(
+        { error: "Too many attempts. Please try again in a few minutes." },
+        { status: 429 },
+      );
+    }
+  } catch (err) {
+    console.error("[auth] Rate limit check failed:", err);
+  }
+
   let body: unknown;
   try {
     body = await request.json();

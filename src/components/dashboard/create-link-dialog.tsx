@@ -120,7 +120,7 @@ export function CreateLinkDialog() {
         if (!isOpen) resetForm();
       }}
     >
-      <DialogTrigger className="bg-primary shadow-blue hover:bg-primary/90 inline-flex h-11 shrink-0 cursor-pointer items-center justify-center rounded-[48px] px-6 text-[15px] font-bold text-white">
+      <DialogTrigger className="bg-primary shadow-blue hover:bg-primary/90 inline-flex h-11 shrink-0 cursor-pointer items-center justify-center rounded-[48px] px-6 text-[15px] font-bold text-white transition-[background-color,transform] duration-150 active:scale-[0.96]">
         <Plus className="mr-2 h-4 w-4" />
         New Link
       </DialogTrigger>

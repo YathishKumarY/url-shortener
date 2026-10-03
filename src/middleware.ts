@@ -9,8 +9,9 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const isAuthPage = pathname.startsWith("/auth/signin") || pathname.startsWith("/auth/signup");
+  const isHomePage = pathname === "/";
 
-  if (isAuthPage && isAuth) {
+  if ((isAuthPage || isHomePage) && isAuth) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
@@ -24,5 +25,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/auth/:path*"],
+  matcher: ["/", "/dashboard/:path*", "/auth/:path*"],
 };

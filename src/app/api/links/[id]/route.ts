@@ -71,9 +71,6 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/links/[id]
         if (existing && existing.id !== id) {
           return NextResponse.json({ error: "This alias is already taken" }, { status: 409 });
         }
-        await redis.del(`link:${link.shortCode}`).catch((err) => {
-          console.error("[links] Redis delete failed:", err);
-        });
         updateData.shortCode = customAlias;
         updateData.customAlias = customAlias;
       }
@@ -84,17 +81,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/links/[id]
     }
 
     if (typeof originalUrl === "string" && originalUrl !== "") {
-      const protocol = new URL(originalUrl).protocol;
-      if (!["http:", "https:"].includes(protocol)) {
-        return NextResponse.json(
-          { error: "Only http and https URLs are allowed" },
-          { status: 400 },
-        );
-      }
       updateData.originalUrl = originalUrl;
-      await redis.del(`link:${link.shortCode}`).catch((err) => {
-        console.error("[links] Redis delete failed:", err);
-      });
     }
 
     if (Object.keys(updateData).length === 0) {
@@ -105,6 +92,19 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/links/[id]
       where: { id },
       data: updateData,
     });
+
+    // Drop the cache for both the old and the new code after any change.
+    // Expiry edits matter as much as URL edits here: the cached entry carries
+    // its own expiresAt, so leaving it in place would keep serving the old
+    // expiry (or keep a freshly expired link alive) for up to a day.
+    const staleKeys = new Set([`link:${link.shortCode}`, `link:${updated.shortCode}`]);
+    await Promise.all(
+      Array.from(staleKeys).map((key) =>
+        redis.del(key).catch((err) => {
+          console.error("[links] Redis delete failed:", err);
+        }),
+      ),
+    );
 
     return NextResponse.json(updated);
   } catch (error) {

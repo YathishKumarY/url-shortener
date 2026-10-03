@@ -136,6 +136,14 @@
   html {
     @apply font-sans;
   }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
   ::view-transition-old(root),
   ::view-transition-new(root) {
     animation-duration: 0.4s;

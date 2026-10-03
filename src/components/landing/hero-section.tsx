@@ -15,7 +15,7 @@ import {
 import { LinklyIcon } from "@/components/shared/linkly-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { copyToClipboard } from "@/lib/utils";
+import { copyToClipboard, faviconUrl } from "@/lib/utils";
 
 type ShortenedLink = {
   id: string;
@@ -37,9 +37,26 @@ function CopyCell({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="copy-btn-bg text-card-foreground hover:text-foreground flex shrink-0 items-center justify-center rounded-full p-2.5 transition-colors"
+      aria-label={copied ? "Copied" : "Copy short link"}
+      title="Copy short link"
+      className="copy-btn-bg text-card-foreground hover:text-foreground relative flex size-9 shrink-0 items-center justify-center rounded-full transition-[background-color,color] duration-150 active:scale-[0.96]"
     >
-      {copied ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4" />}
+      <Copy
+        className="absolute h-4 w-4 transition-[opacity,transform,filter] duration-200 ease-[cubic-bezier(0.2,0,0,1)]"
+        style={{
+          opacity: copied ? 0 : 1,
+          transform: copied ? "scale(0.25)" : "scale(1)",
+          filter: copied ? "blur(4px)" : "blur(0px)",
+        }}
+      />
+      <Check
+        className="absolute h-4 w-4 text-green-400 transition-[opacity,transform,filter] duration-200 ease-[cubic-bezier(0.2,0,0,1)]"
+        style={{
+          opacity: copied ? 1 : 0,
+          transform: copied ? "scale(1)" : "scale(0.25)",
+          filter: copied ? "blur(0px)" : "blur(4px)",
+        }}
+      />
     </button>
   );
 }
@@ -64,14 +81,16 @@ function MobileAccordionRow({ link, dim }: { link: ShortenedLink; dim?: boolean 
       {expanded && (
         <div className="space-y-3 px-6 pb-4">
           <div className="flex items-center gap-2.5">
-            <img
-              src={`https://www.google.com/s2/favicons?domain=${new URL(link.originalUrl).hostname}&sz=32`}
-              alt=""
-              className="h-8 w-8 shrink-0 rounded"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = "none";
-              }}
-            />
+            {faviconUrl(link.originalUrl, 32) && (
+              <img
+                src={faviconUrl(link.originalUrl, 32)!}
+                alt=""
+                className="h-8 w-8 shrink-0 rounded"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = "none";
+                }}
+              />
+            )}
             <span className="text-card-foreground truncate text-sm font-light">
               {link.originalUrl}
             </span>
@@ -170,7 +189,7 @@ export function HeroSection() {
             <Button
               type="submit"
               disabled={loading}
-              className="bg-primary shadow-blue hover:bg-primary/90 h-[60px] rounded-[48px] px-8 text-sm font-semibold text-white"
+              className="bg-primary shadow-blue hover:bg-primary/90 h-[60px] rounded-[40px] px-8 text-sm font-semibold text-white"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Shorten Now!"}
             </Button>
@@ -277,14 +296,16 @@ export function HeroSection() {
                 </div>
 
                 <div className="flex w-[320px] items-center gap-2.5">
-                  <img
-                    src={`https://www.google.com/s2/favicons?domain=${new URL(link.originalUrl).hostname}&sz=32`}
-                    alt=""
-                    className="h-8 w-8 shrink-0 rounded"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none";
-                    }}
-                  />
+                  {faviconUrl(link.originalUrl, 32) && (
+                    <img
+                      src={faviconUrl(link.originalUrl, 32)!}
+                      alt=""
+                      className="h-8 w-8 shrink-0 rounded outline outline-1 outline-black/10 dark:outline-white/10"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  )}
                   <span className="text-card-foreground truncate text-sm font-light">
                     {link.originalUrl}
                   </span>
@@ -294,7 +315,7 @@ export function HeroSection() {
                   <div className="h-9 w-9 rounded bg-white/10 opacity-40" />
                 </div>
 
-                <span className="text-card-foreground w-[60px] text-center text-sm font-light">
+                <span className="text-card-foreground w-[60px] text-center text-sm font-light tabular-nums">
                   {link.clickCount}
                 </span>
 

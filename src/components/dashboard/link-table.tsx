@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { QrCodeDisplay } from "@/components/shared/qr-code-display";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLinks, useDeleteLink } from "@/hooks/use-links";
-import { copyToClipboard } from "@/lib/utils";
+import { copyToClipboard, faviconUrl } from "@/lib/utils";
 import type { LinkWithClicks } from "@/types";
 
 function CopyCell({ shortCode }: { shortCode: string }) {
@@ -27,6 +27,8 @@ function CopyCell({ shortCode }: { shortCode: string }) {
       </span>
       <button
         onClick={handleCopy}
+        aria-label={copied ? "Short link copied" : `Copy short link for ${shortCode}`}
+        title="Copy short link"
         className="copy-btn-bg text-card-foreground hover:text-foreground flex shrink-0 cursor-pointer items-center justify-center rounded-full p-2.5 transition-colors"
       >
         {copied ? (
@@ -93,14 +95,16 @@ function MobileCard({
       </div>
 
       <div className="flex min-w-0 items-center gap-2">
-        <img
-          src={`https://www.google.com/s2/favicons?domain=${new URL(link.originalUrl).hostname}&sz=16`}
-          alt=""
-          className="h-4 w-4 shrink-0 rounded"
-          onError={(e) => {
-            (e.target as HTMLImageElement).style.display = "none";
-          }}
-        />
+        {faviconUrl(link.originalUrl, 16) && (
+          <img
+            src={faviconUrl(link.originalUrl, 16)!}
+            alt=""
+            className="h-4 w-4 shrink-0 rounded"
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = "none";
+            }}
+          />
+        )}
         <a
           href={link.originalUrl}
           target="_blank"
@@ -127,6 +131,8 @@ function MobileCard({
             <QrCodeDisplay shortCode={link.shortCode} />
             <Link
               href={`/dashboard/links/${link.id}`}
+              aria-label={`Edit link ${link.shortCode}`}
+              title="Edit link"
               className="border-border bg-secondary shadow-soft text-foreground hover:bg-secondary/80 flex items-center justify-center rounded-full border p-2 transition-colors"
             >
               <Pencil className="h-3.5 w-3.5" />
@@ -134,6 +140,8 @@ function MobileCard({
             <button
               onClick={() => onDelete(link.id)}
               disabled={deleting}
+              aria-label={`Delete link ${link.shortCode}`}
+              title="Delete link"
               className="border-border bg-secondary shadow-soft text-foreground hover:bg-secondary/80 flex items-center justify-center rounded-full border p-2 transition-colors"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -270,14 +278,16 @@ export function LinkTable({
 
             {/* Original Link with favicon */}
             <div className="flex min-w-[200px] flex-1 items-center gap-2.5 pr-4">
-              <img
-                src={`https://www.google.com/s2/favicons?domain=${new URL(link.originalUrl).hostname}&sz=32`}
-                alt=""
-                className="h-8 w-8 shrink-0 rounded"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
-              />
+              {faviconUrl(link.originalUrl, 32) && (
+                <img
+                  src={faviconUrl(link.originalUrl, 32)!}
+                  alt=""
+                  className="h-8 w-8 shrink-0 rounded"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = "none";
+                  }}
+                />
+              )}
               <a
                 href={link.originalUrl}
                 target="_blank"
@@ -322,6 +332,8 @@ export function LinkTable({
               <div className="flex w-[110px] items-center justify-center gap-2.5">
                 <Link
                   href={`/dashboard/links/${link.id}`}
+                  aria-label={`Edit link ${link.shortCode}`}
+                  title="Edit link"
                   className="border-border bg-secondary shadow-soft text-foreground hover:bg-secondary/80 flex size-[42px] items-center justify-center rounded-full border transition-colors"
                 >
                   <Pencil className="h-4 w-4" />
@@ -329,6 +341,8 @@ export function LinkTable({
                 <button
                   onClick={() => handleDelete(link.id)}
                   disabled={deleteLink.isPending}
+                  aria-label={`Delete link ${link.shortCode}`}
+                  title="Delete link"
                   className="border-border bg-secondary shadow-soft text-foreground hover:bg-secondary/80 flex size-[42px] items-center justify-center rounded-full border transition-colors"
                 >
                   <Trash2 className="h-4 w-4" />
