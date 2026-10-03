@@ -1,8 +1,8 @@
 import { NextResponse, after } from "next/server";
 import { recordClick } from "@/lib/analytics";
+import { cacheGet, cacheSet, cacheDel } from "@/lib/cache";
 import { prisma } from "@/lib/prisma";
 import { redirectLimiter, getClientIp } from "@/lib/rate-limit";
-import { redis } from "@/lib/redis";
 
 /** Value stored in Redis so the cached path can honour expiry without a DB read. */
 interface CachedLink {
@@ -68,15 +68,13 @@ export async function GET(request: Request, ctx: RouteContext<"/[shortCode]">) {
 
   try {
     const cacheKey = `link:${shortCode}`;
-    const cached = parseCached(await redis.get<unknown>(cacheKey));
+    const cached = parseCached(await cacheGet(cacheKey));
 
     if (cached) {
       // The cache carries expiresAt precisely so an expired link cannot be
       // served from it for up to a day after it lapses.
       if (cached.expiresAt !== null && cached.expiresAt <= Date.now()) {
-        await redis.del(cacheKey).catch((err) => {
-          console.error("[redirect] Redis delete failed:", err);
-        });
+        await cacheDel(cacheKey);
         return expiredResponse(shortCode, request);
       }
 
@@ -97,9 +95,7 @@ export async function GET(request: Request, ctx: RouteContext<"/[shortCode]">) {
     }
 
     if (link.expiresAt && new Date(link.expiresAt).getTime() <= Date.now()) {
-      await redis.del(cacheKey).catch((err) => {
-        console.error("[redirect] Redis delete failed:", err);
-      });
+      await cacheDel(cacheKey);
       return expiredResponse(shortCode, request);
     }
 
@@ -113,9 +109,7 @@ export async function GET(request: Request, ctx: RouteContext<"/[shortCode]">) {
       ? Math.min(CACHE_TTL_SECONDS, Math.ceil((payload.expiresAt - Date.now()) / 1000))
       : CACHE_TTL_SECONDS;
     if (ttl > 0) {
-      await redis.set(cacheKey, JSON.stringify(payload), { ex: ttl }).catch((err) => {
-        console.error("[redirect] Redis cache set failed:", err);
-      });
+      await cacheSet(cacheKey, JSON.stringify(payload), ttl);
     }
 
     after(async () => {

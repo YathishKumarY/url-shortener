@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { cacheDel } from "@/lib/cache";
 import { prisma } from "@/lib/prisma";
-import { redis } from "@/lib/redis";
 import { updateLinkSchema, formatZodErrors } from "@/lib/validators";
 
 export async function GET(_request: Request, ctx: RouteContext<"/api/links/[id]">) {
@@ -98,13 +98,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/links/[id]
     // its own expiresAt, so leaving it in place would keep serving the old
     // expiry (or keep a freshly expired link alive) for up to a day.
     const staleKeys = new Set([`link:${link.shortCode}`, `link:${updated.shortCode}`]);
-    await Promise.all(
-      Array.from(staleKeys).map((key) =>
-        redis.del(key).catch((err) => {
-          console.error("[links] Redis delete failed:", err);
-        }),
-      ),
-    );
+    await Promise.all(Array.from(staleKeys).map((key) => cacheDel(key)));
 
     return NextResponse.json(updated);
   } catch (error) {
@@ -133,12 +127,7 @@ export async function DELETE(_request: Request, ctx: RouteContext<"/api/links/[i
       return NextResponse.json({ error: "Link not found" }, { status: 404 });
     }
 
-    await Promise.all([
-      prisma.link.delete({ where: { id } }),
-      redis.del(`link:${link.shortCode}`).catch((err) => {
-        console.error("[links] Redis delete failed:", err);
-      }),
-    ]);
+    await Promise.all([prisma.link.delete({ where: { id } }), cacheDel(`link:${link.shortCode}`)]);
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {

@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { buildShortUrl } from "@/lib/app-url";
 import { auth } from "@/lib/auth";
+import { cacheSet } from "@/lib/cache";
 import { generateShortCode } from "@/lib/nanoid";
 import { prisma } from "@/lib/prisma";
 import { createLinkLimiter, getClientIp } from "@/lib/rate-limit";
-import { redis } from "@/lib/redis";
 import { createLinkSchema, linkQuerySchema, formatZodErrors } from "@/lib/validators";
 
 const CACHE_TTL_SECONDS = 86400;
@@ -99,17 +99,13 @@ export async function POST(request: Request) {
       ? Math.min(CACHE_TTL_SECONDS, Math.ceil((expiresAtMs - Date.now()) / 1000))
       : CACHE_TTL_SECONDS;
     if (ttl > 0) {
-      try {
-        // Same shape the redirect handler expects, so it can honour expiry
-        // without a database round trip.
-        await redis.set(
-          `link:${link.shortCode}`,
-          JSON.stringify({ id: link.id, originalUrl: url, expiresAt: expiresAtMs }),
-          { ex: ttl },
-        );
-      } catch (err) {
-        console.error("[links] Redis cache set failed:", err);
-      }
+      // Same shape the redirect handler expects, so it can honour expiry
+      // without a database round trip.
+      await cacheSet(
+        `link:${link.shortCode}`,
+        JSON.stringify({ id: link.id, originalUrl: url, expiresAt: expiresAtMs }),
+        ttl,
+      );
     }
 
     return NextResponse.json(
