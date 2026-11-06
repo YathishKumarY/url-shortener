@@ -1,84 +1,67 @@
 "use client";
 
-import { LogOut, Moon, Sun, User } from "lucide-react";
-import { useSession, signOut } from "next-auth/react";
-import { useTheme } from "next-themes";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
+import { Suspense } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Globe, KeyRound, Puzzle, ShieldCheck, Tags, UserRound, Webhook } from "lucide-react";
+import { AccountTab } from "@/components/settings/account-tab";
+import { ApiKeysTab } from "@/components/settings/api-keys-tab";
+import { DomainsTab } from "@/components/settings/domains-tab";
+import { IntegrationsTab } from "@/components/settings/integrations-tab";
+import { ProfileTab } from "@/components/settings/profile-tab";
+import { TagsTab } from "@/components/settings/tags-tab";
+import { WebhooksTab } from "@/components/settings/webhooks-tab";
+import { PageHeader, Segmented } from "@/components/shared/ui-kit";
 
-export default function SettingsPage() {
-  const { data: session } = useSession();
-  const { theme, setTheme } = useTheme();
+const TABS = [
+  { value: "profile", label: "Profile", icon: UserRound, Component: ProfileTab },
+  { value: "tags", label: "Tags", icon: Tags, Component: TagsTab },
+  { value: "api", label: "API keys", icon: KeyRound, Component: ApiKeysTab },
+  { value: "webhooks", label: "Webhooks", icon: Webhook, Component: WebhooksTab },
+  { value: "domains", label: "Domains", icon: Globe, Component: DomainsTab },
+  { value: "integrations", label: "Integrations", icon: Puzzle, Component: IntegrationsTab },
+  { value: "account", label: "Account", icon: ShieldCheck, Component: AccountTab },
+] as const;
+
+function Settings() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const active = TABS.find((t) => t.value === params.get("tab")) ?? TABS[0];
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <h1 className="text-foreground text-xl font-bold">Settings</h1>
-      <p className="text-muted-foreground mt-2 text-sm">
-        Manage your account settings and preferences.
-      </p>
-
-      <Separator className="my-6" />
-
-      <div className="space-y-6">
-        <div className="border-border bg-card rounded-lg border p-6">
-          <h2 className="text-foreground mb-4 text-sm font-semibold">Profile</h2>
-          <div className="flex items-center gap-4">
-            <Avatar className="h-16 w-16">
-              <AvatarImage src={session?.user?.image ?? undefined} />
-              <AvatarFallback className="bg-primary text-primary-foreground text-lg">
-                {session?.user?.name?.charAt(0)?.toUpperCase() ?? <User className="h-6 w-6" />}
-              </AvatarFallback>
-            </Avatar>
-            <div>
-              <p className="text-foreground text-sm font-medium">{session?.user?.name ?? "User"}</p>
-              <p className="text-muted-foreground text-sm">{session?.user?.email}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="border-border bg-card rounded-lg border p-6">
-          <h2 className="text-foreground mb-4 text-sm font-semibold">Appearance</h2>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-foreground text-sm">Theme</p>
-              <p className="text-muted-foreground text-xs">Choose between light and dark mode</p>
-            </div>
-            <div className="flex gap-2">
-              <Button
-                variant={theme === "light" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setTheme("light")}
-              >
-                <Sun className="mr-2 h-4 w-4" />
-                Light
-              </Button>
-              <Button
-                variant={theme === "dark" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setTheme("dark")}
-              >
-                <Moon className="mr-2 h-4 w-4" />
-                Dark
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        <div className="border-destructive/30 bg-card rounded-lg border p-6">
-          <h2 className="text-foreground mb-2 text-sm font-semibold">Danger Zone</h2>
-          <p className="text-muted-foreground mb-4 text-xs">Sign out of your account</p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => signOut({ callbackUrl: "/" })}
-            className="border-destructive/50 text-destructive hover:bg-destructive/10"
-          >
-            <LogOut className="mr-2 h-4 w-4" />
-            Sign Out
-          </Button>
-        </div>
+    <div className="mx-auto max-w-4xl">
+      <PageHeader
+        title="Settings"
+        description="Your profile, tags, developer tools, domains and account."
+      />
+      <div className="mb-5">
+        <Segmented
+          value={active.value}
+          onChange={(value) =>
+            router.replace(value === "profile" ? pathname : `${pathname}?tab=${value}`, {
+              scroll: false,
+            })
+          }
+          options={TABS.map((t) => ({
+            value: t.value,
+            label: (
+              <span className="flex items-center gap-1.5">
+                <t.icon className="size-3.5" />
+                {t.label}
+              </span>
+            ),
+          }))}
+        />
       </div>
+      <active.Component />
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense>
+      <Settings />
+    </Suspense>
   );
 }

@@ -3,7 +3,7 @@ import { TopBar } from "@/components/dashboard/top-bar";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="bg-background relative min-h-screen overflow-hidden">
+    <div className="bg-background relative min-h-screen overflow-x-clip">
       {/* Decorative cubes */}
       <div className="pointer-events-none absolute -top-16 -left-16 h-[500px] w-[500px] opacity-60">
         <div className="cube absolute bottom-0 left-0 h-[200px] w-[200px]" />

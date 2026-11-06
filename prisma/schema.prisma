@@ -7,6 +7,11 @@ datasource db {
   provider = "postgresql"
 }
 
+enum Role {
+  USER
+  ADMIN
+}
+
 model Account {
   id                String  @id @default(cuid())
   userId            String
@@ -48,9 +53,17 @@ model User {
   emailVerified DateTime?
   image         String?
   password      String?
+  role          Role      @default(USER)
+  /// Set by an admin. Banned users cannot sign in, and their links stop resolving.
+  bannedAt      DateTime?
   accounts      Account[]
   sessions      Session[]
   links         Link[]
+  tags          Tag[]
+  apiKeys       ApiKey[]
+  webhooks      Webhook[]
+  domains       Domain[]
+  bioPage       BioPage?
   createdAt     DateTime  @default(now())
 }
 
@@ -73,36 +86,211 @@ model EmailVerificationToken {
 }
 
 model Link {
-  id          String    @id @default(cuid())
-  shortCode   String    @unique
+  id          String  @id @default(cuid())
+  /// Hostname of a verified custom domain, or "" for the app's own domain.
+  /// A string rather than a nullable FK so (domain, shortCode) can be unique:
+  /// Postgres treats NULLs as distinct inside a unique index.
+  domain      String  @default("")
+  shortCode   String
   originalUrl String
-  customAlias String?   @unique
+  /// Set when the owner picked the code themselves (informational).
+  customAlias String?
   userId      String?
-  user        User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt   DateTime?
-  clickCount  Int       @default(0)
-  clicks      Click[]
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  user        User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([shortCode])
-  @@index([userId])
+  /// Owner-facing label; defaults to the destination page title.
+  title       String?
+  /// Private notes, never shown to visitors.
+  description String?
+
+  // ---- Access rules -------------------------------------------------------
+  /// bcrypt hash. Visitors must enter the password before being redirected.
+  password   String?
+  expiresAt  DateTime?
+  /// Where visitors go once the link has expired or hit its click limit.
+  expiredUrl String?
+  /// Link only starts resolving at this instant ("scheduled" links).
+  startsAt   DateTime?
+  /// Link stops resolving after this many human clicks.
+  maxClicks  Int?
+  /// Paused by the owner: visitors see a "link disabled" notice.
+  disabled   Boolean   @default(false)
+  /// Hidden from the default dashboard list, but still resolves.
+  archived   Boolean   @default(false)
+
+  // ---- Redirect behaviour -------------------------------------------------
+  /// 301, 302, 307 or 308.
+  redirectType Int     @default(302)
+  /// Append the visitor's query string to the destination.
+  forwardQuery Boolean @default(true)
+  /// Strip the Referer header so the destination cannot see where the visitor came from.
+  hideReferrer Boolean @default(false)
+  /// Keep the short URL in the address bar by framing the destination.
+  cloaked      Boolean @default(false)
+  /// Privacy mode (like nolog.link): count clicks, but store no visitor details.
+  noLog        Boolean @default(false)
+
+  // ---- Targeting ----------------------------------------------------------
+  iosUrl     String?
+  androidUrl String?
+  /// { "US": "https://...", "IN": "https://..." } keyed by ISO 3166-1 alpha-2.
+  geoTargets Json?
+  /// [{ "url": "https://...", "weight": 50 }, ...] for A/B split testing.
+  abVariants Json?
+
+  // ---- Custom social preview (served to link-preview crawlers) -----------
+  ogTitle       String?
+  ogDescription String?
+  ogImage       String?
+
+  publicStats Boolean @default(false)
+  /// Shown on the owner's link-in-bio page.
+  bioPinned   Boolean @default(false)
+  bioPosition Int     @default(0)
+
+  // ---- Moderation ---------------------------------------------------------
+  bannedAt     DateTime?
+  bannedReason String?
+
+  clickCount    Int       @default(0)
+  lastClickedAt DateTime?
+  tags          Tag[]
+  clicks        Click[]
+  reports       Report[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([domain, shortCode])
+  @@index([userId, createdAt])
 }
 
 model Click {
+  id           String   @id @default(cuid())
+  linkId       String
+  link         Link     @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  timestamp    DateTime @default(now())
+  referrer     String?
+  /// Hostname of the referrer, so breakdowns group by site rather than by page.
+  referrerHost String?
+  browser      String?
+  os           String?
+  device       String?
+  /// ISO 3166-1 alpha-2 code (rows written before codes were stored may hold a name).
+  country      String?
+  region       String?
+  city         String?
+  /// Primary language from Accept-Language, e.g. "en" or "pt-BR".
+  language     String?
+  /// "link", "qr" or "bio".
+  source       String?
+  /// The URL the visitor was actually sent to (differs under targeting or A/B tests).
+  destination  String?
+  isBot        Boolean  @default(false)
+  ipHash       String?
+
+  @@index([linkId, timestamp])
+  @@index([timestamp])
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  name      String
+  color     String   @default("blue")
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  links     Link[]
+  createdAt DateTime @default(now())
+
+  @@unique([userId, name])
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  name       String
+  /// First characters of the key, shown so the owner can tell keys apart.
+  prefix     String
+  /// SHA-256 of the full key; the key itself is shown once and never stored.
+  hashedKey  String    @unique
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model Webhook {
+  id              String    @id @default(cuid())
+  url             String
+  /// HMAC-SHA256 signing secret for the X-Linkly-Signature header.
+  secret          String
+  /// Subset of: link.created, link.updated, link.deleted, link.clicked
+  events          String[]
+  enabled         Boolean   @default(true)
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastStatus      Int?
+  lastError       String?
+  lastTriggeredAt DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model Domain {
+  id                String    @id @default(cuid())
+  hostname          String    @unique
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verified          Boolean   @default(false)
+  /// Expected value of the _linkly-verify TXT record.
+  verificationToken String
+  verifiedAt        DateTime?
+  /// Where "/" on this domain sends visitors.
+  rootRedirect      String?
+  /// Where unknown short codes on this domain send visitors.
+  notFoundRedirect  String?
+  createdAt         DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model BioPage {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Public handle: the page lives at /@slug.
+  slug        String   @unique
+  displayName String?
+  bio         String?
+  avatarUrl   String?
+  theme       String   @default("midnight")
+  /// { "github": "https://...", "x": "https://...", ... }
+  socials     Json?
+  published   Boolean  @default(true)
+  views       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Report {
   id        String   @id @default(cuid())
   linkId    String
   link      Link     @relation(fields: [linkId], references: [id], onDelete: Cascade)
-  timestamp DateTime @default(now())
-  referrer  String?
-  browser   String?
-  os        String?
-  device    String?
-  country   String?
-  city      String?
-  ipHash    String?
+  reason    String
+  details   String?
+  email     String?
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now())
 
-  @@index([linkId, timestamp])
-  @@index([linkId])
-  @@index([timestamp])
+  @@index([resolved, createdAt])
+}
+
+model BlockedDomain {
+  id        String   @id @default(cuid())
+  /// Blocks this host and all of its subdomains.
+  domain    String   @unique
+  reason    String?
+  createdAt DateTime @default(now())
 }

@@ -1,23 +1,36 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import type { ClickAnalytics } from "@/types";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/api-client";
+import { browserTimezone } from "@/lib/format";
+import type { StatsData } from "@/types";
 
-export function useAnalytics(linkId: string, period = "7d") {
-  return useQuery<ClickAnalytics>({
-    queryKey: ["analytics", linkId, period],
-    queryFn: async () => {
-      const res = await fetch(`/api/links/${linkId}/stats?period=${period}`);
-      if (!res.ok) {
-        let msg = "Failed to fetch analytics";
-        try {
-          const data = await res.json();
-          if (typeof data.error === "string") msg = data.error;
-        } catch {}
-        throw new Error(msg);
-      }
-      return res.json();
-    },
-    enabled: !!linkId,
+function query(period: string, includeBots: boolean) {
+  return new URLSearchParams({
+    period,
+    tz: browserTimezone(),
+    ...(includeBots ? { includeBots: "true" } : {}),
   });
 }
+
+/** Analytics for one link (owner only). */
+export function useLinkStats(linkId: string, period = "7d", includeBots = false) {
+  return useQuery<StatsData>({
+    queryKey: ["stats", "link", linkId, period, includeBots],
+    queryFn: () => apiFetch(`/api/links/${linkId}/stats?${query(period, includeBots)}`),
+    enabled: !!linkId,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Analytics across every link the user owns. */
+export function useAccountStats(period = "7d", includeBots = false) {
+  return useQuery<StatsData>({
+    queryKey: ["stats", "account", period, includeBots],
+    queryFn: () => apiFetch(`/api/stats?${query(period, includeBots)}`),
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** @deprecated use useLinkStats */
+export const useAnalytics = useLinkStats;

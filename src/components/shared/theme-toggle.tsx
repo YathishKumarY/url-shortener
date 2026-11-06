@@ -1,17 +1,29 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Sun, Moon } from "lucide-react";
 import { useTheme } from "next-themes";
 
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
+  const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setMounted(true), []);
 
   if (!mounted) return null;
+  // Inside the app the floating toggle covers content; theme lives in
+  // Settings there. Bio pages and cloaked/notice pages style themselves.
+  // `/{code}+` and `/@handle` are rewritten, so the browser still shows them.
+  if (
+    /^\/(dashboard|admin|bio|unlock|stats|preview)(\/|$)/.test(pathname) ||
+    /^\/[^/]+\+$/.test(pathname) ||
+    pathname.startsWith("/@")
+  ) {
+    return null;
+  }
 
   const isDark = theme === "dark";
 
@@ -28,11 +40,11 @@ export function ThemeToggle() {
   return (
     <>
       {/* Mobile: compact horizontal pill at bottom-right */}
-      <div className="fixed right-4 bottom-6 z-50 sm:hidden">
+      <div className="fixed right-4 bottom-6 z-50 xl:hidden">
         <div className="rounded-pill border-border bg-secondary shadow-soft relative flex h-[44px] w-[90px] items-center border">
           {/* Sliding highlight */}
           <div
-            className="rounded-pill bg-primary shadow-blue absolute top-[3px] h-[38px] w-[42px] transition-all duration-500 ease-in-out"
+            className="rounded-pill bg-primary shadow-blue absolute top-[3px] h-[38px] w-[42px] transition-[left] duration-500 ease-[cubic-bezier(0.2,0,0,1)]"
             style={{ left: isDark ? "45px" : "3px" }}
           />
           <button
@@ -41,7 +53,7 @@ export function ThemeToggle() {
             aria-label="Light theme"
           >
             <Sun
-              className={`h-4.5 w-4.5 transition-colors duration-500 ${!isDark ? "text-white" : "text-card-foreground"}`}
+              className={`h-4.5 w-4.5 transition-colors duration-300 ${!isDark ? "text-white" : "text-card-foreground"}`}
             />
           </button>
           <button
@@ -50,21 +62,21 @@ export function ThemeToggle() {
             aria-label="Dark theme"
           >
             <Moon
-              className={`h-4.5 w-4.5 transition-colors duration-500 ${isDark ? "text-white" : "text-card-foreground"}`}
+              className={`h-4.5 w-4.5 transition-colors duration-300 ${isDark ? "text-white" : "text-card-foreground"}`}
             />
           </button>
         </div>
       </div>
 
       {/* Desktop: full vertical sidebar */}
-      <div className="fixed top-1/2 right-0 z-50 hidden -translate-y-1/2 sm:block">
+      <div className="fixed top-1/2 right-0 z-50 hidden -translate-y-1/2 xl:block">
         <div className="relative h-[270px] w-[58px]">
           {/* Background pill */}
           <div className="rounded-pill border-border bg-secondary shadow-soft absolute inset-0 border" />
 
           {/* Sliding highlight pill */}
           <div
-            className="rounded-pill bg-primary border-primary shadow-blue absolute left-1/2 w-[44px] -translate-x-1/2 border transition-all duration-500 ease-in-out"
+            className="rounded-pill bg-primary border-primary shadow-blue absolute left-1/2 w-[44px] -translate-x-1/2 border transition-[top,height] duration-500 ease-[cubic-bezier(0.2,0,0,1)]"
             style={{
               top: isDark ? "calc(100% - 150px - 7px)" : "7px",
               height: isDark ? "150px" : "105px",
@@ -78,10 +90,10 @@ export function ThemeToggle() {
             aria-label="Light theme"
           >
             <Sun
-              className={`h-5 w-5 transition-colors duration-500 ${!isDark ? "text-white" : "text-card-foreground"}`}
+              className={`h-5 w-5 transition-colors duration-300 ${!isDark ? "text-white" : "text-card-foreground"}`}
             />
             <span
-              className={`text-base whitespace-nowrap transition-all duration-500 ${
+              className={`text-base whitespace-nowrap transition-[color,font-weight] duration-300 ${
                 !isDark ? "font-bold text-white" : "text-card-foreground font-light"
               }`}
               style={{ writingMode: "vertical-rl" }}
@@ -97,10 +109,10 @@ export function ThemeToggle() {
             aria-label="Dark theme"
           >
             <Moon
-              className={`h-5 w-5 transition-colors duration-500 ${isDark ? "text-white" : "text-card-foreground"}`}
+              className={`h-5 w-5 transition-colors duration-300 ${isDark ? "text-white" : "text-card-foreground"}`}
             />
             <span
-              className={`text-base whitespace-nowrap transition-all duration-500 ${
+              className={`text-base whitespace-nowrap transition-[color,font-weight] duration-300 ${
                 isDark ? "font-bold text-white" : "text-card-foreground font-light"
               }`}
               style={{ writingMode: "vertical-rl" }}

@@ -3,10 +3,25 @@ import Link from "next/link";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import { SignInForm } from "@/components/auth/signin-form";
 import { Separator } from "@/components/ui/separator";
+import { enabledOAuthProviders, ssoProviderName } from "@/lib/auth";
+import { config } from "@/lib/config";
 
 export const metadata = { title: "Sign In" };
 
-export default function SignInPage() {
+const ERRORS: Record<string, string> = {
+  AccountBanned: "This account has been suspended.",
+  RegistrationDisabled: "New sign-ups are disabled on this instance. Ask an admin for an account.",
+  OAuthAccountNotLinked: "That email is already registered with a different sign-in method.",
+  AccessDenied: "Sign-in was denied.",
+};
+
+export default async function SignInPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { error } = await searchParams;
+  const message = error ? (ERRORS[error] ?? null) : null;
   return (
     <div className="bg-background flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-md space-y-8">
@@ -21,24 +36,34 @@ export default function SignInPage() {
           </p>
         </div>
 
-        <OAuthButtons />
+        {message && (
+          <p className="bg-destructive/10 text-destructive rounded-xl px-4 py-3 text-center text-sm">
+            {message}
+          </p>
+        )}
 
-        <div className="flex items-center gap-4">
-          <Separator className="flex-1" />
-          <span className="text-muted-foreground text-xs">OR</span>
-          <Separator className="flex-1" />
-        </div>
+        <OAuthButtons providers={enabledOAuthProviders} ssoName={ssoProviderName} />
+
+        {enabledOAuthProviders.length > 0 && (
+          <div className="flex items-center gap-4">
+            <Separator className="flex-1" />
+            <span className="text-muted-foreground text-xs">OR</span>
+            <Separator className="flex-1" />
+          </div>
+        )}
 
         <Suspense>
           <SignInForm />
         </Suspense>
 
-        <p className="text-muted-foreground text-center text-sm">
-          Don&apos;t have an account?{" "}
-          <Link href="/auth/signup" className="text-primary font-semibold hover:underline">
-            Register Now
-          </Link>
-        </p>
+        {!config.registrationDisabled && (
+          <p className="text-muted-foreground text-center text-sm">
+            Don&apos;t have an account?{" "}
+            <Link href="/auth/signup" className="text-primary font-semibold hover:underline">
+              Register Now
+            </Link>
+          </p>
+        )}
       </div>
     </div>
   );
