@@ -1,17 +1,29 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Sun, Moon } from "lucide-react";
 import { useTheme } from "next-themes";
 
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
+  const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setMounted(true), []);
 
   if (!mounted) return null;
+  // Inside the app the floating toggle covers content; theme lives in
+  // Settings there. Bio pages and cloaked/notice pages style themselves.
+  // `/{code}+` and `/@handle` are rewritten, so the browser still shows them.
+  if (
+    /^\/(dashboard|admin|bio|unlock|stats|preview)(\/|$)/.test(pathname) ||
+    /^\/[^/]+\+$/.test(pathname) ||
+    pathname.startsWith("/@")
+  ) {
+    return null;
+  }
 
   const isDark = theme === "dark";
 
@@ -28,7 +40,7 @@ export function ThemeToggle() {
   return (
     <>
       {/* Mobile: compact horizontal pill at bottom-right */}
-      <div className="fixed right-4 bottom-6 z-50 sm:hidden">
+      <div className="fixed right-4 bottom-6 z-50 xl:hidden">
         <div className="rounded-pill border-border bg-secondary shadow-soft relative flex h-[44px] w-[90px] items-center border">
           {/* Sliding highlight */}
           <div
@@ -57,7 +69,7 @@ export function ThemeToggle() {
       </div>
 
       {/* Desktop: full vertical sidebar */}
-      <div className="fixed top-1/2 right-0 z-50 hidden -translate-y-1/2 sm:block">
+      <div className="fixed top-1/2 right-0 z-50 hidden -translate-y-1/2 xl:block">
         <div className="relative h-[270px] w-[58px]">
           {/* Background pill */}
           <div className="rounded-pill border-border bg-secondary shadow-soft absolute inset-0 border" />

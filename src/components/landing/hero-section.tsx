@@ -1,375 +1,467 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  Link2,
-  Loader2,
-  Copy,
-  Check,
-  HelpCircle,
   ArrowRight,
-  ChevronDown,
-  ChevronUp,
+  Check,
+  Copy,
+  Dices,
+  Eye,
+  Flame,
+  Loader2,
+  Lock,
+  QrCode,
+  SlidersHorizontal,
+  Timer,
+  Trash2,
 } from "lucide-react";
+import { QrDialog } from "@/components/dashboard/qr-dialog";
 import { LinklyIcon } from "@/components/shared/linkly-icon";
+import { Favicon, inputClass } from "@/components/shared/ui-kit";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { copyToClipboard, faviconUrl } from "@/lib/utils";
+import { useInstanceConfig } from "@/hooks/use-settings";
+import { ApiError, apiFetch } from "@/lib/api-client";
+import { formatDate } from "@/lib/format";
+import { cn, copyToClipboard } from "@/lib/utils";
+import type { LinkItem } from "@/types";
 
-type ShortenedLink = {
-  id: string;
-  shortCode: string;
-  shortUrl: string;
-  originalUrl: string;
-  clickCount: number;
-  createdAt: string;
-  isActive: boolean;
-};
+type RecentLink = Pick<
+  LinkItem,
+  | "id"
+  | "shortCode"
+  | "shortUrl"
+  | "displayUrl"
+  | "originalUrl"
+  | "createdAt"
+  | "hasPassword"
+  | "maxClicks"
+  | "expiresAt"
+  | "domain"
+> & { claimToken?: string };
 
-function CopyCell({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  async function handleCopy() {
-    await copyToClipboard(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+const STORAGE_KEY = "linkly:recent-links";
+const EXPIRY_OPTIONS = [
+  { value: "", label: "Never expires" },
+  { value: "3600", label: "Expires in 1 hour" },
+  { value: "86400", label: "Expires in 1 day" },
+  { value: "604800", label: "Expires in 7 days" },
+  { value: "2592000", label: "Expires in 30 days" },
+];
+const LIMIT_OPTIONS = [
+  { value: "", label: "Unlimited clicks" },
+  { value: "1", label: "Self-destruct after 1 click" },
+  { value: "10", label: "After 10 clicks" },
+  { value: "100", label: "After 100 clicks" },
+];
+
+function loadRecent(): RecentLink[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as RecentLink[]).slice(0, 20) : [];
+  } catch {
+    return [];
   }
+}
+
+function saveRecent(links: RecentLink[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(links.slice(0, 20)));
+  } catch {
+    // private mode / storage full: the list simply is not persisted
+  }
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
   return (
     <button
-      onClick={handleCopy}
+      type="button"
+      onClick={async () => {
+        await copyToClipboard(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1800);
+      }}
       aria-label={copied ? "Copied" : "Copy short link"}
-      title="Copy short link"
-      className="copy-btn-bg text-card-foreground hover:text-foreground relative flex size-9 shrink-0 items-center justify-center rounded-full transition-[background-color,color] duration-150 active:scale-[0.96]"
+      className="copy-btn-bg text-card-foreground hover:text-foreground relative flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full transition-[color,transform] duration-150 active:scale-[0.94]"
     >
       <Copy
-        className="absolute h-4 w-4 transition-[opacity,transform,filter] duration-200 ease-[cubic-bezier(0.2,0,0,1)]"
-        style={{
-          opacity: copied ? 0 : 1,
-          transform: copied ? "scale(0.25)" : "scale(1)",
-          filter: copied ? "blur(4px)" : "blur(0px)",
-        }}
+        className="absolute size-4 transition-[opacity,transform] duration-200"
+        style={{ opacity: copied ? 0 : 1, transform: copied ? "scale(0.3)" : "none" }}
       />
       <Check
-        className="absolute h-4 w-4 text-green-400 transition-[opacity,transform,filter] duration-200 ease-[cubic-bezier(0.2,0,0,1)]"
-        style={{
-          opacity: copied ? 1 : 0,
-          transform: copied ? "scale(1)" : "scale(0.25)",
-          filter: copied ? "blur(0px)" : "blur(4px)",
-        }}
+        className="absolute size-4 text-green-500 transition-[opacity,transform] duration-200"
+        style={{ opacity: copied ? 1 : 0, transform: copied ? "none" : "scale(0.3)" }}
       />
     </button>
   );
 }
 
-function MobileAccordionRow({ link, dim }: { link: ShortenedLink; dim?: boolean }) {
-  const [expanded, setExpanded] = useState(false);
-
+function RecentRow({
+  link,
+  onQr,
+  onRemove,
+}: {
+  link: RecentLink;
+  onQr: () => void;
+  onRemove: () => void;
+}) {
   return (
-    <div className={`${dim ? "glass-row-dim" : "glass-row"}`}>
-      <div className="flex items-center justify-between px-6 py-4">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className="text-card-foreground truncate text-sm font-light">{link.shortUrl}</span>
-          <CopyCell text={link.shortUrl} />
-        </div>
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="copy-btn-bg text-card-foreground hover:text-foreground ml-2 flex shrink-0 items-center justify-center rounded-full p-2.5 transition-colors"
+    <div className="glass-row flex flex-col gap-3 px-5 py-4 text-left md:flex-row md:items-center md:gap-4">
+      <div className="flex min-w-0 items-center gap-2.5 md:w-[280px] md:shrink-0">
+        <a
+          href={link.shortUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-primary truncate text-[15px] font-semibold hover:underline"
         >
-          {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          {link.displayUrl}
+        </a>
+        <CopyButton text={link.shortUrl} />
+      </div>
+      <div className="flex min-w-0 flex-1 items-center gap-2.5">
+        <Favicon url={link.originalUrl} size={32} className="size-7" />
+        <span className="text-card-foreground truncate text-sm font-light" title={link.originalUrl}>
+          {link.originalUrl}
+        </span>
+      </div>
+      <div className="flex items-center gap-1.5">
+        {link.hasPassword && (
+          <span
+            title="Password protected"
+            className="bg-secondary text-muted-foreground flex size-7 items-center justify-center rounded-full"
+          >
+            <Lock className="size-3.5" />
+          </span>
+        )}
+        {link.maxClicks !== null && (
+          <span
+            title={`Self-destructs after ${link.maxClicks} click${link.maxClicks === 1 ? "" : "s"}`}
+            className="bg-secondary text-muted-foreground flex size-7 items-center justify-center rounded-full"
+          >
+            <Flame className="size-3.5" />
+          </span>
+        )}
+        {link.expiresAt && (
+          <span
+            title={`Expires ${new Date(link.expiresAt).toLocaleString()}`}
+            className="bg-secondary text-muted-foreground flex size-7 items-center justify-center rounded-full"
+          >
+            <Timer className="size-3.5" />
+          </span>
+        )}
+        <span className="text-muted-foreground ml-1 hidden text-xs lg:inline">
+          {formatDate(link.createdAt)}
+        </span>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={onQr}
+          aria-label="Show QR code"
+          className="text-card-foreground hover:text-foreground hover:bg-secondary flex size-9 cursor-pointer items-center justify-center rounded-full transition-colors"
+        >
+          <QrCode className="size-4" />
+        </button>
+        <a
+          href={`${link.shortUrl}+`}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Open preview page"
+          title="Preview page"
+          className="text-card-foreground hover:text-foreground hover:bg-secondary flex size-9 items-center justify-center rounded-full transition-colors"
+        >
+          <Eye className="size-4" />
+        </a>
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label="Remove from this list"
+          className="text-card-foreground hover:text-destructive hover:bg-secondary flex size-9 cursor-pointer items-center justify-center rounded-full transition-colors"
+        >
+          <Trash2 className="size-4" />
         </button>
       </div>
-      {expanded && (
-        <div className="space-y-3 px-6 pb-4">
-          <div className="flex items-center gap-2.5">
-            {faviconUrl(link.originalUrl, 32) && (
-              <img
-                src={faviconUrl(link.originalUrl, 32)!}
-                alt=""
-                className="h-8 w-8 shrink-0 rounded"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
-              />
-            )}
-            <span className="text-card-foreground truncate text-sm font-light">
-              {link.originalUrl}
-            </span>
-          </div>
-          <div className="text-card-foreground flex items-center justify-between text-sm">
-            <span className="font-light">{link.clickCount} clicks</span>
-            <span className={`font-light ${link.isActive ? "text-[#1eb036]" : "text-[#b0901e]"}`}>
-              {link.isActive ? "Active" : "Inactive"}
-            </span>
-            <span className="font-light">
-              {new Date(link.createdAt).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              })}
-            </span>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
 export function HeroSection() {
+  const { data: config } = useInstanceConfig();
   const [url, setUrl] = useState("");
-  const [links, setLinks] = useState<ShortenedLink[]>([]);
+  const [links, setLinks] = useState<RecentLink[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const trialLinksRemaining = Math.max(0, 5 - links.length);
+  const [showOptions, setShowOptions] = useState(false);
+  const [alias, setAlias] = useState("");
+  const [emoji, setEmoji] = useState(false);
+  const [password, setPassword] = useState("");
+  const [expiry, setExpiry] = useState("");
+  const [limit, setLimit] = useState("");
+  const [qrFor, setQrFor] = useState<RecentLink | null>(null);
+  const anonymousDisabled = config ? !config.anonymousLinksEnabled : false;
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLinks(loadRecent());
+  }, []);
+
+  function update(next: RecentLink[]) {
+    setLinks(next);
+    saveRecent(next);
+  }
 
   async function handleShorten(e: React.FormEvent) {
     e.preventDefault();
-    if (!url.trim()) return;
+    let value = url.trim();
+    if (!value) return;
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(value)) value = `https://${value}`;
 
     setLoading(true);
     setError("");
-
     try {
-      const res = await fetch("/api/links", {
+      const link = await apiFetch<LinkItem & { claimToken?: string }>("/api/links", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        json: {
+          url: value,
+          ...(alias.trim() ? { customAlias: alias.trim() } : emoji ? { emoji: true } : {}),
+          ...(password ? { password } : {}),
+          ...(expiry
+            ? { expiresAt: new Date(Date.now() + Number(expiry) * 1000).toISOString() }
+            : {}),
+          ...(limit ? { maxClicks: Number(limit) } : {}),
+        },
       });
-
-      if (!res.ok) {
-        const data = await res.json();
-        setError(data.error?.url?.[0] ?? "Failed to shorten URL");
-        return;
-      }
-
-      const data = await res.json();
-      const newLink: ShortenedLink = {
-        id: data.id ?? String(Date.now()),
-        shortCode: data.shortCode,
-        shortUrl: data.shortUrl,
-        originalUrl: url,
-        clickCount: 0,
-        createdAt: new Date().toISOString(),
-        isActive: true,
+      const recent: RecentLink = {
+        id: link.id,
+        shortCode: link.shortCode,
+        shortUrl: link.shortUrl,
+        displayUrl: link.displayUrl,
+        originalUrl: link.originalUrl,
+        createdAt: link.createdAt,
+        hasPassword: link.hasPassword,
+        maxClicks: link.maxClicks,
+        expiresAt: link.expiresAt,
+        domain: link.domain,
+        claimToken: link.claimToken,
       };
-      setLinks((prev) => [newLink, ...prev]);
+      update([recent, ...links.filter((l) => l.id !== link.id)]);
+      await copyToClipboard(link.shortUrl);
       setUrl("");
-    } catch {
-      setError("Something went wrong. Please try again.");
+      setAlias("");
+      setPassword("");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again.");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <section className="relative z-10 flex flex-col items-center px-6 pt-8 pb-12 text-center sm:px-6 md:pt-16">
-      {/* Title */}
-      <h1 className="max-w-4xl text-[35px] leading-[1.185] font-extrabold tracking-tight sm:text-4xl md:text-[60px] md:leading-[80px]">
+    <section className="relative z-10 flex flex-col items-center px-4 pt-8 pb-16 text-center sm:px-6 md:px-12 md:pt-14">
+      <span className="border-border bg-secondary/70 text-card-foreground mb-6 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium backdrop-blur">
+        <span className="bg-primary size-1.5 rounded-full" />
+        Open source · Self-hostable · Free forever
+      </span>
+      <h1 className="max-w-4xl text-[35px] leading-[1.15] font-extrabold tracking-tight sm:text-5xl md:text-[64px] md:leading-[1.1]">
         <span className="gradient-title">Shorten Your Loooong Links :)</span>
       </h1>
-
-      <p className="text-card-foreground mt-5 max-w-[358px] text-base leading-[23.5px] font-light md:max-w-xl">
-        Linkly is an efficient and easy-to-use URL shortening service that streamlines your online
-        experience.
+      <p className="text-card-foreground mt-5 max-w-xl text-base leading-relaxed font-light md:text-lg">
+        Short links with superpowers: passwords, self-destruct, smart targeting, A/B tests, QR codes
+        and real-time analytics. No account needed to start.
       </p>
 
-      {/* Desktop URL Input pill */}
-      <form onSubmit={handleShorten} className="mt-10 hidden w-full max-w-[660px] sm:block">
-        <div className="shadow-soft search-pill relative flex items-center rounded-[48px]">
-          <div className="flex flex-1 items-center gap-4 pl-6">
-            <LinklyIcon className="h-5 w-5 shrink-0" />
-            <Input
-              type="url"
-              placeholder="Enter the link here"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              className="text-card-foreground placeholder:text-card-foreground h-[68px] border-0 bg-transparent text-base font-light focus-visible:ring-0"
-            />
-          </div>
-          <div className="pr-2">
-            <Button
-              type="submit"
-              disabled={loading}
-              className="bg-primary shadow-blue hover:bg-primary/90 h-[60px] rounded-[40px] px-8 text-sm font-semibold text-white"
-            >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Shorten Now!"}
-            </Button>
-          </div>
-        </div>
-      </form>
-
-      {/* Mobile URL Input pill - with circular arrow button */}
-      <form onSubmit={handleShorten} className="mt-6 w-full sm:hidden">
-        <div className="shadow-soft search-pill relative flex h-[60px] items-center rounded-[48px]">
-          <div className="flex flex-1 items-center gap-5 pl-6">
-            <LinklyIcon className="h-5 w-5 shrink-0" />
-            <Input
-              type="url"
-              placeholder="Enter the link here"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              className="text-card-foreground placeholder:text-card-foreground h-full border-0 bg-transparent p-0 text-base font-light focus-visible:ring-0"
-            />
-          </div>
-          <div className="pr-2">
-            <Button
-              type="submit"
-              disabled={loading}
-              className="bg-primary shadow-blue hover:bg-primary/90 h-[45px] w-[45px] rounded-full p-0 text-white"
-            >
-              {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <ArrowRight className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
-        </div>
-      </form>
-
-      {error && <p className="text-destructive mt-3 text-sm">{error}</p>}
-
-      {/* Trial message */}
-      <div className="mt-8 flex flex-col items-center gap-6">
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-card-foreground text-center font-light">
-            You can create{" "}
-            <span className="font-bold text-[#eb568e]">
-              {String(trialLinksRemaining).padStart(2, "0")}
-            </span>{" "}
-            more links.
-            <br className="sm:hidden" />
-            <span className="hidden sm:inline"> </span>
+      {anonymousDisabled ? (
+        <div className="border-border bg-secondary/70 mt-10 w-full max-w-[660px] rounded-3xl border p-6 backdrop-blur">
+          <p className="text-foreground font-semibold">
+            This instance requires an account to create links.
+          </p>
+          <div className="mt-4 flex justify-center gap-3">
             <Link
-              href="/auth/signup"
-              className="text-card-foreground hover:text-foreground font-bold underline decoration-solid"
+              href="/auth/signin"
+              className="border-border bg-secondary text-card-foreground rounded-full border px-5 py-2.5 text-sm font-semibold"
             >
-              Register Now
-            </Link>{" "}
-            to enjoy Unlimited usage
-          </span>
-          <HelpCircle className="text-card-foreground hidden h-4 w-4 sm:block" />
-        </div>
-      </div>
-
-      {/* Links table */}
-      {links.length > 0 && (
-        <div className="mt-10 w-full max-w-6xl">
-          <div className="flex flex-col gap-[3px]">
-            {/* Desktop table header */}
-            <div className="glass-header hidden items-center justify-between px-6 py-5 md:flex">
-              <span className="text-card-foreground w-[220px] text-left text-[15px] font-bold">
-                Short Link
-              </span>
-              <span className="text-card-foreground w-[320px] text-left text-[15px] font-bold">
-                Original Link
-              </span>
-              <span className="text-card-foreground w-[80px] text-center text-[15px] font-bold">
-                QR Code
-              </span>
-              <span className="text-card-foreground w-[60px] text-center text-[15px] font-bold">
-                Clicks
-              </span>
-              <span className="text-card-foreground w-[100px] text-center text-[15px] font-bold">
-                Status
-              </span>
-              <span className="text-card-foreground w-[120px] text-center text-[15px] font-bold">
-                Date
-              </span>
-            </div>
-
-            {/* Mobile header */}
-            <div className="glass-header flex items-center rounded-t-[10px] px-6 py-5 md:hidden">
-              <span className="text-card-foreground text-[15px] font-bold">Shorten Links</span>
-            </div>
-
-            {/* Desktop rows */}
-            {links.map((link, idx) => (
-              <div
-                key={link.id}
-                className={`${idx >= 5 ? "glass-row-dim" : "glass-row"} hidden items-center justify-between px-6 py-4 md:flex`}
+              Sign in
+            </Link>
+            {config?.registrationEnabled && (
+              <Link
+                href="/auth/signup"
+                className="bg-primary shadow-blue rounded-full px-5 py-2.5 text-sm font-semibold text-white"
               >
-                <div className="flex w-[220px] items-center gap-2.5">
-                  <span className="text-card-foreground truncate text-sm font-light">
-                    {link.shortUrl}
-                  </span>
-                  <CopyCell text={link.shortUrl} />
-                </div>
-
-                <div className="flex w-[320px] items-center gap-2.5">
-                  {faviconUrl(link.originalUrl, 32) && (
-                    <img
-                      src={faviconUrl(link.originalUrl, 32)!}
-                      alt=""
-                      className="h-8 w-8 shrink-0 rounded outline outline-1 outline-black/10 dark:outline-white/10"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = "none";
-                      }}
-                    />
-                  )}
-                  <span className="text-card-foreground truncate text-sm font-light">
-                    {link.originalUrl}
-                  </span>
-                </div>
-
-                <div className="flex w-[80px] justify-center">
-                  <div className="h-9 w-9 rounded bg-white/10 opacity-40" />
-                </div>
-
-                <span className="text-card-foreground w-[60px] text-center text-sm font-light tabular-nums">
-                  {link.clickCount}
-                </span>
-
-                <div className="flex w-[100px] items-center justify-center gap-2">
-                  <span
-                    className={`text-sm font-light ${link.isActive ? "text-[#1eb036]" : "text-[#b0901e]"}`}
-                  >
-                    {link.isActive ? "Active" : "Inactive"}
-                  </span>
-                  <div
-                    className={`flex items-center justify-center rounded-full p-2 ${link.isActive ? "bg-[rgba(30,176,54,0.14)]" : "bg-[rgba(176,144,30,0.19)]"}`}
-                  >
-                    <Link2
-                      className={`h-4 w-4 ${link.isActive ? "text-card-foreground" : "text-[#b0901e]"}`}
-                    />
-                  </div>
-                </div>
-
-                <span className="text-card-foreground w-[120px] text-center text-sm font-light">
-                  {new Date(link.createdAt)
-                    .toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "2-digit",
-                      year: "numeric",
-                    })
-                    .replace(",", " -")
-                    .replace(" ", " - ")}
-                </span>
-              </div>
-            ))}
-
-            {/* Mobile accordion rows */}
-            {links.map((link, idx) => (
-              <div key={`mobile-${link.id}`} className="md:hidden">
-                <MobileAccordionRow link={link} dim={idx >= 5} />
-              </div>
-            ))}
+                Create account
+              </Link>
+            )}
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={handleShorten} className="mt-10 w-full max-w-[680px]">
+          <div className="shadow-soft search-pill relative flex h-[64px] items-center rounded-[48px] sm:h-[76px]">
+            <div className="flex flex-1 items-center gap-3 pl-5 sm:gap-4 sm:pl-6">
+              <LinklyIcon className="h-5 w-5 shrink-0" />
+              <input
+                type="text"
+                inputMode="url"
+                aria-label="Long URL"
+                placeholder="Enter the link here"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                className="text-card-foreground placeholder:text-card-foreground/80 h-full min-w-0 flex-1 bg-transparent text-base font-light outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => setShowOptions((v) => !v)}
+                aria-expanded={showOptions}
+                aria-label="Link options"
+                title="Link options"
+                className={cn(
+                  "text-card-foreground hover:text-foreground flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors",
+                  showOptions && "bg-primary/15 text-primary",
+                )}
+              >
+                <SlidersHorizontal className="size-4" />
+              </button>
+            </div>
+            <div className="pr-1.5 sm:pr-2">
+              <Button
+                type="submit"
+                disabled={loading}
+                aria-label="Shorten"
+                className="bg-primary shadow-blue hover:bg-primary/90 h-[50px] rounded-[40px] px-4 text-sm font-semibold text-white sm:h-[60px] sm:px-8"
+              >
+                {loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <span className="hidden sm:inline">Shorten Now!</span>
+                    <ArrowRight className="size-4 sm:hidden" />
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
 
-          {/* Bottom fade overlay */}
-          {links.length > 3 && (
-            <div className="bottom-fade relative -mt-36 flex h-36 w-full items-end justify-center pb-4">
-              <p className="text-card-foreground text-sm font-light">
-                <Link
-                  href="/auth/signup"
-                  className="text-primary hover:text-primary/80 underline decoration-solid"
+          {showOptions && (
+            <div className="border-border bg-secondary/80 animate-in fade-in slide-in-from-top-2 mt-3 grid gap-3 rounded-3xl border p-4 text-left backdrop-blur-xl duration-200 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-muted-foreground mb-1 block text-xs font-medium">
+                  Custom alias
+                </span>
+                <input
+                  value={alias}
+                  onChange={(e) => {
+                    setAlias(e.target.value.replace(/\s+/g, "-"));
+                    setEmoji(false);
+                  }}
+                  placeholder="my-link"
+                  className={inputClass}
+                />
+              </label>
+              <label className="block">
+                <span className="text-muted-foreground mb-1 block text-xs font-medium">
+                  Password
+                </span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Optional"
+                  className={inputClass}
+                />
+              </label>
+              <label className="block">
+                <span className="text-muted-foreground mb-1 block text-xs font-medium">Expiry</span>
+                <select
+                  value={expiry}
+                  onChange={(e) => setExpiry(e.target.value)}
+                  className={inputClass}
                 >
-                  Register Now
-                </Link>{" "}
-                to enjoy Unlimited History
-              </p>
+                  {EXPIRY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-muted-foreground mb-1 block text-xs font-medium">
+                  Click limit
+                </span>
+                <select
+                  value={limit}
+                  onChange={(e) => setLimit(e.target.value)}
+                  className={inputClass}
+                >
+                  {LIMIT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setEmoji((v) => !v);
+                  setAlias("");
+                }}
+                className={cn(
+                  "inline-flex h-9 w-fit cursor-pointer items-center gap-2 rounded-full border px-3 text-xs font-medium transition-colors sm:col-span-2",
+                  emoji
+                    ? "border-primary bg-primary/12 text-primary"
+                    : "border-border text-card-foreground hover:text-foreground",
+                )}
+              >
+                <Dices className="size-3.5" /> Emoji short code {emoji ? "on 🦊🍕🚀" : "off"}
+              </button>
             </div>
           )}
+          {error && <p className="text-destructive mt-3 text-sm">{error}</p>}
+        </form>
+      )}
+
+      <p className="text-card-foreground mt-6 text-sm font-light">
+        Links are copied to your clipboard automatically.{" "}
+        {config?.registrationEnabled !== false && (
+          <>
+            <Link
+              href="/auth/signup"
+              className="text-foreground font-bold underline decoration-solid underline-offset-2"
+            >
+              Register free
+            </Link>{" "}
+            for analytics, editing, custom domains and more.
+          </>
+        )}
+      </p>
+
+      {links.length > 0 && (
+        <div className="mt-10 w-full max-w-6xl">
+          <div className="flex flex-col gap-[3px] overflow-hidden rounded-2xl">
+            <div className="glass-header flex items-center justify-between px-5 py-4">
+              <span className="text-card-foreground text-[15px] font-bold">Your recent links</span>
+              <span className="text-muted-foreground text-xs">Saved in this browser only</span>
+            </div>
+            {links.map((link) => (
+              <RecentRow
+                key={link.id}
+                link={link}
+                onQr={() => setQrFor(link)}
+                onRemove={() => update(links.filter((l) => l.id !== link.id))}
+              />
+            ))}
+          </div>
         </div>
+      )}
+
+      {qrFor && (
+        <QrDialog
+          open={!!qrFor}
+          onOpenChange={(open) => !open && setQrFor(null)}
+          shortCode={qrFor.shortCode}
+          domain={qrFor.domain}
+          displayUrl={qrFor.displayUrl}
+        />
       )}
     </section>
   );

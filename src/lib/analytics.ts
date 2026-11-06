@@ -1,98 +1,170 @@
-import { createHash } from "crypto";
-import { UAParser } from "ua-parser-js";
+import { cacheGet, cacheSet } from "@/lib/cache";
+import { config } from "@/lib/config";
 import { prisma } from "@/lib/prisma";
+import { isPrivateIp } from "@/lib/safe-fetch";
+import type { VisitorInfo } from "@/lib/visitor";
+import { dispatchWebhooks } from "@/lib/webhooks";
 
-interface ClickData {
-  linkId: string;
-  request: Request;
-  geo?: { country?: string; city?: string };
+export { hashIp } from "@/lib/visitor";
+
+interface Geo {
+  country: string | null;
+  region: string | null;
+  city: string | null;
+}
+
+const NO_GEO: Geo = { country: null, region: null, city: null };
+
+/**
+ * Optional IP geolocation for hosts that do not send a country header
+ * (anything but Vercel or Cloudflare). Off by default because it sends each
+ * visitor's IP to a third party.
+ *
+ * Private and loopback addresses are never looked up: the old code asked the
+ * provider about "the caller" for those, which geolocated the *server* and
+ * attributed every local click to the data centre's city.
+ */
+async function lookupGeo(ip: string): Promise<Geo> {
+  const provider = config.geolocationProvider;
+  if (provider === "none" || !ip || ip === "anonymous" || isPrivateIp(ip)) return NO_GEO;
+
+  const cacheKey = `geo:v1:${ip}`;
+  const cached = await cacheGet(cacheKey);
+  if (cached) return (typeof cached === "string" ? JSON.parse(cached) : cached) as Geo;
+
+  let geo = NO_GEO;
+  try {
+    if (provider === "ip-api") {
+      // ip-api's free tier is HTTP-only; HTTPS needs a paid key.
+      const res = await fetch(
+        `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,countryCode,regionName,city`,
+        { signal: AbortSignal.timeout(2500) },
+      );
+      const data = await res.json();
+      if (data.status === "success") {
+        geo = {
+          country: data.countryCode ?? null,
+          region: data.regionName ?? null,
+          city: data.city ?? null,
+        };
+      }
+    } else if (provider === "ipinfo" && config.ipinfoToken) {
+      const res = await fetch(
+        `https://ipinfo.io/${encodeURIComponent(ip)}?token=${encodeURIComponent(config.ipinfoToken)}`,
+        { signal: AbortSignal.timeout(2500) },
+      );
+      const data = await res.json();
+      geo = { country: data.country ?? null, region: data.region ?? null, city: data.city ?? null };
+    }
+  } catch {
+    return NO_GEO;
+  }
+
+  await cacheSet(cacheKey, JSON.stringify(geo), 86400);
+  return geo;
+}
+
+export interface RecordClickInput {
+  link: { id: string; userId: string | null; shortCode: string; domain: string; noLog?: boolean };
+  visitor: VisitorInfo;
+  source: "link" | "qr" | "bio";
+  destination: string | null;
+  /** The counter was already bumped atomically (click-limited links). */
+  counted?: boolean;
 }
 
 /**
- * An unsalted SHA-256 of an IP is not anonymous: the whole IPv4 space is only
- * ~4.3 billion inputs, so any hash can be reversed by brute force in minutes.
- * A secret salt makes the digest useless without the key while still being
- * stable enough to count unique visitors.
+ * Store one visit. Bots get a row (so the dashboard can show bot traffic)
+ * but never move the link's click counter.
  */
-const IP_HASH_SALT = process.env.IP_HASH_SALT ?? "";
-
-if (!IP_HASH_SALT && process.env.NODE_ENV === "production") {
-  console.warn(
-    "[analytics] IP_HASH_SALT is not set - visitor hashes are brute-forceable. Set it in the environment.",
-  );
-}
-
-function hashIp(ip: string): string {
-  return createHash("sha256").update(`${IP_HASH_SALT}:${ip}`).digest("hex").slice(0, 32);
-}
-
-function isPrivateAddress(ip: string): boolean {
-  return (
-    !ip ||
-    ip === "unknown" ||
-    ip === "127.0.0.1" ||
-    ip === "::1" ||
-    ip.startsWith("192.168.") ||
-    ip.startsWith("10.") ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(ip)
-  );
-}
-
-async function geolocateIp(ip: string): Promise<{ country: string | null; city: string | null }> {
-  try {
-    // HTTPS so the visitor's IP is not sent to a third party in cleartext.
-    const url = isPrivateAddress(ip)
-      ? "https://ip-api.com/json/?fields=status,country,city"
-      : `https://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,country,city`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
-    if (!res.ok) return { country: null, city: null };
-    const data = await res.json();
-    if (data.status !== "success") return { country: null, city: null };
-    return { country: data.country ?? null, city: data.city ?? null };
-  } catch {
-    return { country: null, city: null };
-  }
-}
-
-export async function recordClick({ linkId, request, geo }: ClickData) {
-  const ua = new UAParser(request.headers.get("user-agent") ?? "");
-  const referrer = request.headers.get("referer") ?? null;
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  const ip = forwardedFor?.split(",")[0]?.trim() ?? "unknown";
-
-  const browser = ua.getBrowser().name ?? null;
-  const os = ua.getOS().name ?? null;
-  const deviceType = ua.getDevice().type ?? "desktop";
-
-  let country = geo?.country ?? request.headers.get("x-vercel-ip-country") ?? null;
-  let city = geo?.city ?? request.headers.get("x-vercel-ip-city") ?? null;
-
-  if (!country) {
-    const geoData = await geolocateIp(ip);
-    country = geoData.country;
-    city = city ?? geoData.city;
+export async function recordClick({
+  link,
+  visitor,
+  source,
+  destination,
+  counted = false,
+}: RecordClickInput): Promise<void> {
+  // Privacy mode: the counter moves (click limits still work) but nothing
+  // about the visitor is written, and no click webhook carries their details.
+  if (link.noLog) {
+    if (!visitor.isBot && !counted) {
+      await prisma.link.update({
+        where: { id: link.id },
+        data: { clickCount: { increment: 1 }, lastClickedAt: new Date() },
+      });
+    }
+    return;
   }
 
-  // One transaction so a click is never counted without its detail row, and a
-  // detail row never lands without the counter moving. Previously these ran as
-  // independent promises: if the counter update failed the click was recorded
-  // but invisible in the dashboard total, and vice versa.
-  await prisma.$transaction([
-    prisma.click.create({
-      data: {
-        linkId,
-        referrer,
-        browser,
-        os,
-        device: deviceType,
-        country,
-        city,
-        ipHash: ip !== "unknown" ? hashIp(ip) : null,
+  let geo: Geo = { country: visitor.country, region: visitor.region, city: visitor.city };
+  if (!geo.country && !visitor.isBot) {
+    const looked = await lookupGeo(visitor.ip);
+    geo = {
+      country: looked.country,
+      region: geo.region ?? looked.region,
+      city: geo.city ?? looked.city,
+    };
+  }
+
+  const data = {
+    linkId: link.id,
+    referrer: visitor.referrer,
+    referrerHost: visitor.referrerHost,
+    browser: visitor.browser,
+    os: visitor.os,
+    device: visitor.device,
+    country: geo.country,
+    region: geo.region,
+    city: geo.city,
+    language: visitor.language,
+    source,
+    destination,
+    isBot: visitor.isBot,
+    ipHash: visitor.ipHash,
+  };
+
+  if (visitor.isBot || counted) {
+    await prisma.click.create({ data });
+  } else {
+    // One transaction so a click is never counted without its detail row, and
+    // a detail row never lands without the counter moving.
+    await prisma.$transaction([
+      prisma.click.create({ data }),
+      prisma.link.update({
+        where: { id: link.id },
+        data: { clickCount: { increment: 1 }, lastClickedAt: new Date() },
+      }),
+    ]);
+  }
+
+  if (!visitor.isBot) {
+    await dispatchWebhooks(link.userId, "link.clicked", {
+      link: { id: link.id, shortCode: link.shortCode, domain: link.domain || null },
+      click: {
+        timestamp: new Date().toISOString(),
+        source,
+        destination,
+        country: geo.country,
+        city: geo.city,
+        device: visitor.device,
+        browser: visitor.browser,
+        os: visitor.os,
+        referrer: visitor.referrerHost,
+        language: visitor.language,
       },
-    }),
-    prisma.link.update({
-      where: { id: linkId },
-      data: { clickCount: { increment: 1 } },
-    }),
-  ]);
+    });
+  }
+}
+
+/**
+ * Atomically claim one click on a click-limited link. Returns false once the
+ * limit is reached. A single conditional UPDATE means two simultaneous
+ * visitors to a one-time link cannot both get through.
+ */
+export async function claimLimitedClick(linkId: string, maxClicks: number): Promise<boolean> {
+  const claimed = await prisma.link.updateMany({
+    where: { id: linkId, clickCount: { lt: maxClicks } },
+    data: { clickCount: { increment: 1 }, lastClickedAt: new Date() },
+  });
+  return claimed.count > 0;
 }

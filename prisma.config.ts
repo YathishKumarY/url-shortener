@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import { defineConfig } from "prisma/config";
+import { cliDatabaseUrl } from "./src/lib/database-url";
 
 dotenv.config({ path: ".env.local" });
 
@@ -9,6 +10,7 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env.DATABASE_URL!,
+    // Schema changes need a direct connection, never a pooler.
+    url: cliDatabaseUrl()!,
   },
 });

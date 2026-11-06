@@ -53,12 +53,20 @@ describe("createLinkSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects alias longer than 30 chars", () => {
+  it("rejects alias longer than 50 chars", () => {
     const result = createLinkSchema.safeParse({
       url: "https://example.com",
-      customAlias: "a".repeat(31),
+      customAlias: "a".repeat(51),
     });
     expect(result.success).toBe(false);
+  });
+
+  it("accepts a 50-character campaign alias", () => {
+    const result = createLinkSchema.safeParse({
+      url: "https://example.com",
+      customAlias: "a".repeat(50),
+    });
+    expect(result.success).toBe(true);
   });
 
   it("allows empty string alias (treated as no alias)", () => {
@@ -194,5 +202,22 @@ describe("formatZodErrors", () => {
       expect(errors).toHaveProperty("email");
       expect(errors).toHaveProperty("password");
     }
+  });
+});
+
+describe("alias homoglyph guard", () => {
+  it.each(["apple", "яблоко", "μήλο", "りんご", "launch-2026", "🚀launch", "café"])(
+    "accepts single-script %s",
+    (alias) => {
+      expect(
+        createLinkSchema.safeParse({ url: "https://example.com", customAlias: alias }).success,
+      ).toBe(true);
+    },
+  );
+
+  it.each(["аpple", "pаypal", "gοogle"])("rejects mixed-script look-alike %s", (alias) => {
+    expect(
+      createLinkSchema.safeParse({ url: "https://example.com", customAlias: alias }).success,
+    ).toBe(false);
   });
 });

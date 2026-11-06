@@ -1,5 +1,6 @@
 "use client";
 
+import { KeyRound } from "lucide-react";
 import { signIn } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 
@@ -34,26 +35,48 @@ function GitHubIcon() {
   );
 }
 
-export function OAuthButtons() {
+/** Buttons for the OAuth providers this instance has configured. */
+export function OAuthButtons({
+  providers,
+  ssoName = "SSO",
+}: {
+  providers: string[];
+  ssoName?: string;
+}) {
+  if (providers.length === 0) return null;
   return (
     <div className="grid gap-3">
-      <Button
-        variant="outline"
-        className="border-border bg-secondary text-secondary-foreground hover:bg-accent h-12 rounded-[var(--radius-pill)]"
-        onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
-      >
-        <GoogleIcon />
-        Continue with Google
-      </Button>
+      {providers.includes("google") && (
+        <Button
+          variant="outline"
+          className="border-border bg-secondary text-secondary-foreground hover:bg-accent h-12 rounded-[var(--radius-pill)]"
+          onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
+        >
+          <GoogleIcon />
+          Continue with Google
+        </Button>
+      )}
 
-      <Button
-        variant="outline"
-        className="border-border bg-secondary text-secondary-foreground hover:bg-accent h-12 rounded-[var(--radius-pill)]"
-        onClick={() => signIn("github", { callbackUrl: "/dashboard" })}
-      >
-        <GitHubIcon />
-        Continue with GitHub
-      </Button>
+      {providers.includes("github") && (
+        <Button
+          variant="outline"
+          className="border-border bg-secondary text-secondary-foreground hover:bg-accent h-12 rounded-[var(--radius-pill)]"
+          onClick={() => signIn("github", { callbackUrl: "/dashboard" })}
+        >
+          <GitHubIcon />
+          Continue with GitHub
+        </Button>
+      )}
+      {providers.includes("oidc") && (
+        <Button
+          variant="outline"
+          className="border-border bg-secondary text-secondary-foreground hover:bg-accent h-12 rounded-[var(--radius-pill)]"
+          onClick={() => signIn("oidc", { callbackUrl: "/dashboard" })}
+        >
+          <KeyRound className="mr-2 h-5 w-5" />
+          Continue with {ssoName}
+        </Button>
+      )}
     </div>
   );
 }

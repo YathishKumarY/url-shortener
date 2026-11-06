@@ -1,3 +1,5 @@
+import { config } from "@/lib/config";
+
 const FALLBACK_ORIGIN = "http://localhost:3000";
 
 function normalizeOrigin(value: string): string | null {
@@ -22,8 +24,10 @@ function normalizeOrigin(value: string): string | null {
  * the forwarded headers the proxy sets, and only then the raw request URL.
  */
 export function getAppOrigin(request?: Request): string {
+  // `||` rather than `??`: a blank NEXT_PUBLIC_APP_URL= should still fall
+  // through to AUTH_URL.
   const configured =
-    process.env.NEXT_PUBLIC_APP_URL ?? process.env.AUTH_URL ?? process.env.NEXTAUTH_URL;
+    process.env.NEXT_PUBLIC_APP_URL || process.env.AUTH_URL || process.env.NEXTAUTH_URL;
   if (configured) {
     const origin = normalizeOrigin(configured);
     if (origin) return origin;
@@ -49,7 +53,30 @@ export function getAppOrigin(request?: Request): string {
   return FALLBACK_ORIGIN;
 }
 
-/** Build the public short URL for a short code. */
-export function buildShortUrl(shortCode: string, request?: Request): string {
-  return `${getAppOrigin(request)}/${shortCode}`;
+/** Host (with port, if any) of the app's own domain. */
+export function getAppHost(request?: Request): string {
+  return new URL(getAppOrigin(request)).host;
+}
+
+type ShortUrlOptions = Request | { domain?: string | null; request?: Request } | undefined;
+
+function resolveOrigin(options: ShortUrlOptions): string {
+  if (options instanceof Request) return getAppOrigin(options);
+  if (options?.domain) return `${config.customDomainProtocol}://${options.domain}`;
+  return getAppOrigin(options?.request);
+}
+
+/**
+ * Build the public short URL for a short code.
+ *
+ * The code is percent-encoded so emoji and other non-ASCII aliases produce a
+ * valid URL; plain alphanumeric codes are unchanged by the encoding.
+ */
+export function buildShortUrl(shortCode: string, options?: ShortUrlOptions): string {
+  return `${resolveOrigin(options)}/${encodeURIComponent(shortCode)}`;
+}
+
+/** Human-friendly short URL: no scheme, and the code left unencoded. */
+export function displayShortUrl(shortCode: string, options?: ShortUrlOptions): string {
+  return `${resolveOrigin(options).replace(/^https?:\/\//, "")}/${shortCode}`;
 }

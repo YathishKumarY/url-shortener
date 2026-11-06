@@ -15,8 +15,8 @@ export function Navbar() {
   const { data: session } = useSession();
 
   return (
-    <nav className="relative z-10 px-6 py-6 md:px-12">
-      <div className="flex items-center justify-between">
+    <nav className="relative z-10 px-4 py-6 sm:px-6 md:px-12">
+      <div className="mx-auto flex max-w-6xl items-center justify-between">
         <Link href="/" className="flex items-baseline">
           <span className="gradient-logo text-[37px] font-extrabold">Linkly</span>
           <span className="text-foreground/50 -mt-3 -ml-0.5 text-sm">®</span>

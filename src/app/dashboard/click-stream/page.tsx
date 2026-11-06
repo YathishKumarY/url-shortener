@@ -1,107 +1,275 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { MousePointerClick, Globe, Monitor, Clock } from "lucide-react";
+import {
+  Bot,
+  Link2,
+  Monitor,
+  MousePointerClick,
+  Pause,
+  Play,
+  QrCode,
+  Radio,
+  Share2,
+  Smartphone,
+  Tablet,
+} from "lucide-react";
+import { EmptyState, Panel, PageHeader, pill } from "@/components/shared/ui-kit";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { apiFetch } from "@/lib/api-client";
+import { countryFlag, countryName } from "@/lib/countries";
+import { formatNumber, timeAgo } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import type { ClickEvent } from "@/types";
 
-interface ClickEvent {
-  id: string;
-  timestamp: string;
-  referrer: string | null;
-  browser: string | null;
-  os: string | null;
-  device: string | null;
-  country: string | null;
-  city: string | null;
-  link: {
-    shortCode: string;
-    originalUrl: string;
-  };
+const DEVICE_ICON = { mobile: Smartphone, tablet: Tablet, bot: Bot } as const;
+const SOURCE = {
+  qr: { icon: QrCode, label: "QR scan" },
+  bio: { icon: Share2, label: "Bio page" },
+  link: { icon: Link2, label: "Link" },
+} as const;
+const MAX_EVENTS = 200;
+const MINUTES = 30;
+
+type Connection = "connecting" | "live" | "paused" | "offline";
+type StreamEvent = ClickEvent & { fresh?: boolean };
+
+function useNow(interval = 5000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), interval);
+    return () => clearInterval(id);
+  }, [interval]);
+  return now;
 }
 
-export default function ClickStreamPage() {
-  const { data, isLoading } = useQuery<ClickEvent[]>({
-    queryKey: ["click-stream"],
-    queryFn: async () => {
-      const res = await fetch("/api/clicks/stream");
-      if (!res.ok) throw new Error("Failed to fetch");
-      return res.json();
-    },
-    refetchInterval: 10000,
-  });
+/** Clicks per minute over the last half hour, from the events we hold. */
+function PerMinute({ events, now }: { events: StreamEvent[]; now: number }) {
+  const buckets = useMemo(() => {
+    const counts = Array.from({ length: MINUTES }, () => 0);
+    for (const e of events) {
+      const age = Math.floor((now - new Date(e.timestamp).getTime()) / 60_000);
+      if (age >= 0 && age < MINUTES) counts[MINUTES - 1 - age]++;
+    }
+    return counts;
+  }, [events, now]);
+  const max = Math.max(1, ...buckets);
+  const lastFive = buckets.slice(-5).reduce((a, b) => a + b, 0);
 
   return (
-    <div className="mx-auto max-w-4xl">
-      <h1 className="text-foreground mb-6 text-xl font-bold">Click Stream</h1>
-
-      {isLoading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="h-16 w-full rounded-lg" />
-          ))}
-        </div>
-      ) : !data?.length ? (
-        <div className="text-muted-foreground flex flex-col items-center justify-center py-16">
-          <MousePointerClick className="mb-4 h-12 w-12" />
-          <p className="text-lg font-medium">No clicks yet</p>
-          <p className="text-sm">Share your short links to see real-time clicks here</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {data.map((click) => (
-            <div
-              key={click.id}
-              className="border-border bg-card flex items-center gap-4 rounded-lg border p-4"
-            >
-              <div className="bg-primary/10 rounded-full p-2">
-                <MousePointerClick className="text-primary h-4 w-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-primary text-sm font-medium">/{click.link.shortCode}</span>
-                  <span className="text-muted-foreground truncate text-xs">
-                    → {click.link.originalUrl}
-                  </span>
-                </div>
-                <div className="text-muted-foreground mt-1 flex items-center gap-3 text-xs">
-                  {click.browser && (
-                    <span className="flex items-center gap-1">
-                      <Monitor className="h-3 w-3" />
-                      {click.browser} · {click.os}
-                    </span>
-                  )}
-                  {click.country && (
-                    <span className="flex items-center gap-1">
-                      <Globe className="h-3 w-3" />
-                      {click.city ? `${click.city}, ` : ""}
-                      {click.country}
-                    </span>
-                  )}
-                  {click.referrer && (
-                    <span className="max-w-[200px] truncate">from {click.referrer}</span>
-                  )}
-                </div>
-              </div>
-              <div className="text-muted-foreground flex shrink-0 items-center gap-1 text-xs">
-                <Clock className="h-3 w-3" />
-                {formatTimeAgo(click.timestamp)}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    <Panel className="p-4">
+      <div className="mb-3 flex items-baseline justify-between">
+        <p className="text-muted-foreground text-[13px] font-medium">Clicks per minute</p>
+        <p className="text-muted-foreground text-xs">
+          <span className="text-foreground font-semibold tabular-nums">{lastFive}</span> in the last
+          5 min
+        </p>
+      </div>
+      <div className="flex h-16 items-end gap-[3px]">
+        {buckets.map((count, i) => (
+          <div
+            key={i}
+            title={`${MINUTES - 1 - i} min ago: ${count}`}
+            className={cn(
+              "flex-1 rounded-t-sm transition-[height] duration-500",
+              count ? "bg-primary" : "bg-secondary",
+            )}
+            style={{
+              height: `${Math.max(6, (count / max) * 100)}%`,
+              opacity: count ? 0.45 + (i / MINUTES) * 0.55 : 1,
+            }}
+          />
+        ))}
+      </div>
+      <div className="text-muted-foreground mt-1.5 flex justify-between text-[10px]">
+        <span>30 min ago</span>
+        <span>now</span>
+      </div>
+    </Panel>
   );
 }
 
-function formatTimeAgo(timestamp: string): string {
-  const diff = Date.now() - new Date(timestamp).getTime();
-  const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+export default function ClickStreamPage() {
+  const [events, setEvents] = useState<StreamEvent[]>([]);
+  const [paused, setPaused] = useState(false);
+  const [includeBots, setIncludeBots] = useState(false);
+  const [connection, setConnection] = useState<Connection>("connecting");
+  const [sessionCount, setSessionCount] = useState(0);
+  const now = useNow();
+
+  // Backfill with the latest clicks, then stream new ones.
+  const { data: initial, isLoading } = useQuery<ClickEvent[]>({
+    queryKey: ["click-stream", includeBots],
+    queryFn: () => apiFetch(`/api/clicks/stream?includeBots=${includeBots}`),
+    staleTime: 0,
+  });
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (initial) setEvents(initial);
+  }, [initial]);
+
+  useEffect(() => {
+    if (paused) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setConnection("paused");
+      return;
+    }
+    setConnection("connecting");
+    const source = new EventSource(`/api/clicks/stream?includeBots=${includeBots}`);
+    source.onopen = () => setConnection("live");
+    source.onerror = () =>
+      setConnection(source.readyState === EventSource.CLOSED ? "offline" : "connecting");
+    source.addEventListener("click", (message) => {
+      const click = JSON.parse((message as MessageEvent).data) as ClickEvent;
+      setSessionCount((n) => n + 1);
+      setEvents((prev) =>
+        prev.some((e) => e.id === click.id)
+          ? prev
+          : [{ ...click, fresh: true }, ...prev].slice(0, MAX_EVENTS),
+      );
+    });
+    return () => source.close();
+  }, [paused, includeBots]);
+
+  const status = {
+    connecting: { label: "Connecting...", dot: "bg-amber-400" },
+    live: { label: "Live", dot: "bg-green-500" },
+    paused: { label: "Paused", dot: "bg-zinc-400" },
+    offline: { label: "Reconnecting...", dot: "bg-red-500" },
+  }[connection];
+
+  return (
+    <div className="mx-auto max-w-4xl">
+      <PageHeader
+        title={
+          <span className="flex items-center gap-3">
+            Live clicks
+            <span className="border-border bg-secondary inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold">
+              <span className="relative flex size-2">
+                {connection === "live" && (
+                  <span
+                    className={cn(
+                      "absolute inline-flex size-full animate-ping rounded-full opacity-75",
+                      status.dot,
+                    )}
+                  />
+                )}
+                <span className={cn("relative inline-flex size-2 rounded-full", status.dot)} />
+              </span>
+              {status.label}
+            </span>
+          </span>
+        }
+        description="Every visit to your links as it happens, streamed in real time."
+        actions={
+          <>
+            <label className="text-card-foreground flex cursor-pointer items-center gap-2 text-[13px]">
+              <Bot className="text-muted-foreground size-4" /> Bots
+              <Switch checked={includeBots} onCheckedChange={setIncludeBots} size="sm" />
+            </label>
+            <button
+              type="button"
+              className={cn(pill.secondary, pill.small)}
+              onClick={() => setPaused((p) => !p)}
+            >
+              {paused ? <Play /> : <Pause />} {paused ? "Resume" : "Pause"}
+            </button>
+          </>
+        }
+      />
+
+      <div className="mb-4 grid gap-4 sm:grid-cols-[1fr_200px]">
+        <PerMinute events={events} now={now} />
+        <Panel className="flex flex-col justify-center p-4">
+          <p className="text-muted-foreground text-[13px] font-medium">
+            Since you opened this page
+          </p>
+          <p className="text-foreground mt-1 text-3xl font-bold tabular-nums">
+            {formatNumber(sessionCount)}
+          </p>
+          <p className="text-muted-foreground text-xs">new clicks</p>
+        </Panel>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={i} className="h-16 rounded-2xl" />
+          ))}
+        </div>
+      ) : events.length === 0 ? (
+        <EmptyState
+          icon={Radio}
+          title="Waiting for the first click"
+          description="Share one of your links and keep this page open - visits will pop in here instantly."
+        />
+      ) : (
+        <ul className="space-y-2">
+          {events.map((click) => {
+            const DeviceIcon = DEVICE_ICON[click.device as keyof typeof DEVICE_ICON] ?? Monitor;
+            const source = SOURCE[(click.source as keyof typeof SOURCE) ?? "link"] ?? SOURCE.link;
+            const fresh = click.fresh;
+            return (
+              <li
+                key={click.id}
+                className={cn(
+                  "border-border/60 bg-card/70 shadow-soft flex items-center gap-4 rounded-2xl border p-3.5 backdrop-blur-sm",
+                  fresh && "animate-in fade-in slide-in-from-top-2 duration-500",
+                  click.isBot && "opacity-60",
+                )}
+              >
+                <div className="bg-primary/10 text-primary relative flex size-10 shrink-0 items-center justify-center rounded-xl text-lg">
+                  {click.country ? (
+                    countryFlag(click.country)
+                  ) : (
+                    <MousePointerClick className="size-4" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Link
+                      href={`/dashboard/links/${click.link.id}`}
+                      className="text-primary truncate text-sm font-semibold hover:underline"
+                    >
+                      {click.link.domain ? `${click.link.domain}/` : "/"}
+                      {click.link.shortCode}
+                    </Link>
+                    <span className="text-muted-foreground truncate text-xs">
+                      {click.link.title ?? click.link.originalUrl.replace(/^https?:\/\//, "")}
+                    </span>
+                  </div>
+                  <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    <span className="flex items-center gap-1">
+                      <source.icon className="size-3" /> {source.label}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <DeviceIcon className="size-3" />
+                      {click.isBot
+                        ? "Bot"
+                        : [click.browser, click.os].filter(Boolean).join(" on ") ||
+                          "Unknown device"}
+                    </span>
+                    <span>
+                      {click.city ? `${click.city}, ` : ""}
+                      {click.country ? countryName(click.country) : "Unknown location"}
+                    </span>
+                    {click.referrerHost && (
+                      <span className="truncate">via {click.referrerHost}</span>
+                    )}
+                  </div>
+                </div>
+                <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                  {timeAgo(click.timestamp, now)}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
 }

@@ -1,6 +1,7 @@
 import { Inter } from "next/font/google";
 import { Providers } from "@/components/providers";
-import type { Metadata } from "next";
+import { getAppOrigin } from "@/lib/app-url";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 const inter = Inter({
@@ -9,11 +10,29 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(getAppOrigin()),
   title: {
-    default: "Linkly - URL Shortener",
+    default: "Linkly - URL Shortener with Analytics, QR Codes and More",
     template: "%s | Linkly",
   },
-  description: "Shorten your URLs, track clicks, and analyze your audience with Linkly.",
+  description:
+    "Short links with superpowers: passwords, self-destructing links, device and geo targeting, A/B tests, branded QR codes, custom domains, link-in-bio pages and real-time analytics. Open source.",
+  applicationName: "Linkly",
+  openGraph: {
+    type: "website",
+    siteName: "Linkly",
+    title: "Linkly - Short links with superpowers",
+    description:
+      "Passwords, targeting, A/B tests, QR codes, custom domains and real-time analytics. Open source.",
+  },
+  twitter: { card: "summary", title: "Linkly - Short links with superpowers" },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#0b101b" },
+    { media: "(prefers-color-scheme: light)", color: "#f8f9fb" },
+  ],
 };
 
 export default function RootLayout({

@@ -1,126 +1,161 @@
 import { NextResponse, after } from "next/server";
-import { recordClick } from "@/lib/analytics";
-import { cacheGet, cacheSet, cacheDel } from "@/lib/cache";
-import { prisma } from "@/lib/prisma";
-import { redirectLimiter, getClientIp } from "@/lib/rate-limit";
+import { claimLimitedClick, recordClick } from "@/lib/analytics";
+import { buildShortUrl, displayShortUrl } from "@/lib/app-url";
+import { config } from "@/lib/config";
+import { resolveRequestDomain } from "@/lib/domains";
+import { cloakHtml, previewCardHtml } from "@/lib/html";
+import { loadRedirectLink } from "@/lib/link-cache";
+import { enforceRateLimit, getClientIp, redirectLimiter } from "@/lib/rate-limit";
+import {
+  evaluateGates,
+  forwardQueryParams,
+  pickDestination,
+  shouldServePreviewCard,
+  visitSource,
+  type RedirectLink,
+} from "@/lib/redirect";
+import { parseVisitor, type VisitorInfo } from "@/lib/visitor";
 
-/** Value stored in Redis so the cached path can honour expiry without a DB read. */
-interface CachedLink {
-  id: string;
-  originalUrl: string;
-  /** Epoch ms, or null when the link never expires. */
-  expiresAt: number | null;
-}
+const AB_COOKIE_PREFIX = "lk_ab_";
+const AB_COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
 
-const CACHE_TTL_SECONDS = 86400;
-
-function parseCached(value: unknown): CachedLink | null {
-  if (!value) return null;
-  // Entries written by an older build were bare URL strings; treat them as a
-  // miss so they are rewritten in the new shape instead of skipping expiry.
-  const raw = typeof value === "string" ? safeParse(value) : value;
-  if (!raw || typeof raw !== "object") return null;
-  const candidate = raw as Partial<CachedLink>;
-  if (typeof candidate.id !== "string" || typeof candidate.originalUrl !== "string") return null;
-  const expiresAt =
-    typeof candidate.expiresAt === "number" || candidate.expiresAt === null
-      ? candidate.expiresAt
-      : null;
-  return { id: candidate.id, originalUrl: candidate.originalUrl, expiresAt };
-}
-
-function safeParse(value: string): unknown {
+function decodeCode(raw: string): string {
+  if (!/%[0-9a-f]{2}/i.test(raw)) return raw;
   try {
-    return JSON.parse(value);
+    return decodeURIComponent(raw);
   } catch {
-    return null;
+    return raw;
   }
+}
+
+function readCookie(request: Request, name: string): string | null {
+  const header = request.headers.get("cookie");
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (key === name) return rest.join("=");
+  }
+  return null;
 }
 
 export async function GET(request: Request, ctx: RouteContext<"/[shortCode]">) {
-  const { shortCode } = await ctx.params;
+  return handle(request, ctx, true);
+}
 
-  if (!shortCode || shortCode.length > 30) {
+/** Link checkers send HEAD: answer with the redirect but never count a visit. */
+export async function HEAD(request: Request, ctx: RouteContext<"/[shortCode]">) {
+  return handle(request, ctx, false);
+}
+
+async function handle(request: Request, ctx: RouteContext<"/[shortCode]">, record: boolean) {
+  const shortCode = decodeCode((await ctx.params).shortCode);
+
+  if (!shortCode || Array.from(shortCode).length > 100) {
     return NextResponse.json({ error: "Invalid short code" }, { status: 400 });
   }
 
-  const ip = getClientIp(request);
-  let rateLimitHeaders: Record<string, string> = {};
+  const limit = await enforceRateLimit(
+    redirectLimiter,
+    getClientIp(request),
+    "Too many requests. Please slow down.",
+  );
+  if (!limit.ok) return limit.response;
+
   try {
-    const { success, limit, remaining, reset } = await redirectLimiter.limit(ip);
-    rateLimitHeaders = {
-      "X-RateLimit-Limit": String(limit),
-      "X-RateLimit-Remaining": String(remaining),
-      "X-RateLimit-Reset": String(reset),
-    };
-    if (!success) {
-      return NextResponse.json(
-        { error: "Too many requests. Please slow down." },
-        {
-          status: 429,
-          headers: rateLimitHeaders,
-        },
-      );
+    const { domain, settings } = await resolveRequestDomain(request);
+    const link = await loadRedirectLink(domain, shortCode);
+
+    if (!link) {
+      if (settings?.notFoundRedirect) return plainRedirect(settings.notFoundRedirect);
+      return notice("/link-missing", shortCode, request);
     }
-  } catch (err) {
-    console.error("[redirect] Rate limit check failed:", err);
-  }
 
-  try {
-    const cacheKey = `link:${shortCode}`;
-    const cached = parseCached(await cacheGet(cacheKey));
+    const gate = evaluateGates(link);
+    if (gate.kind === "banned") return notice("/link-blocked", shortCode, request);
+    if (gate.kind === "disabled") return notice("/link-disabled", shortCode, request);
+    if (gate.kind === "scheduled") {
+      return notice("/link-scheduled", shortCode, request, {
+        at: new Date(gate.startsAt).toISOString(),
+      });
+    }
+    if (gate.kind === "expired") {
+      return gate.fallback
+        ? plainRedirect(gate.fallback)
+        : notice("/link-expired", shortCode, request, { reason: "expired" });
+    }
 
-    if (cached) {
-      // The cache carries expiresAt precisely so an expired link cannot be
-      // served from it for up to a day after it lapses.
-      if (cached.expiresAt !== null && cached.expiresAt <= Date.now()) {
-        await cacheDel(cacheKey);
-        return expiredResponse(shortCode, request);
-      }
-
+    const visitor = parseVisitor(request);
+    const url = new URL(request.url);
+    const source = visitSource(url.searchParams);
+    const track = (destination: string | null, counted = false) => {
+      if (!record) return;
       after(async () => {
         try {
-          await recordClick({ linkId: cached.id, request });
+          await recordClick({ link, visitor, source, destination, counted });
         } catch (err) {
           console.error("[redirect] Click recording failed:", err);
         }
       });
-      return NextResponse.redirect(cached.originalUrl, 302);
-    }
-
-    const link = await prisma.link.findUnique({ where: { shortCode } });
-
-    if (!link) {
-      return notFoundResponse(shortCode, request);
-    }
-
-    if (link.expiresAt && new Date(link.expiresAt).getTime() <= Date.now()) {
-      await cacheDel(cacheKey);
-      return expiredResponse(shortCode, request);
-    }
-
-    const payload: CachedLink = {
-      id: link.id,
-      originalUrl: link.originalUrl,
-      expiresAt: link.expiresAt ? new Date(link.expiresAt).getTime() : null,
     };
-    // Never cache past the expiry instant.
-    const ttl = payload.expiresAt
-      ? Math.min(CACHE_TTL_SECONDS, Math.ceil((payload.expiresAt - Date.now()) / 1000))
-      : CACHE_TTL_SECONDS;
-    if (ttl > 0) {
-      await cacheSet(cacheKey, JSON.stringify(payload), ttl);
+
+    if (shouldServePreviewCard(link, visitor.isPreviewBot)) {
+      track(null);
+      return previewCard(link, request);
     }
 
-    after(async () => {
-      try {
-        await recordClick({ linkId: link.id, request });
-      } catch (err) {
-        console.error("[redirect] Click recording failed:", err);
-      }
-    });
+    if (link.hasPassword) {
+      const target = new URL(`/unlock/${encodeURIComponent(shortCode)}`, request.url);
+      url.searchParams.forEach((value, key) => target.searchParams.append(key, value));
+      return noStore(NextResponse.redirect(target, 302));
+    }
 
-    return NextResponse.redirect(link.originalUrl, 302);
+    // Click limits count humans only, claimed atomically so two visitors to
+    // a one-time link cannot both get through.
+    let counted = false;
+    if (link.maxClicks !== null && !visitor.isBot && record) {
+      if (!(await claimLimitedClick(link.id, link.maxClicks))) {
+        return link.expiredUrl
+          ? plainRedirect(link.expiredUrl)
+          : notice("/link-expired", shortCode, request, { reason: "limit" });
+      }
+      counted = true;
+    }
+
+    const cookieName = `${AB_COOKIE_PREFIX}${link.id}`;
+    const sticky = Number.parseInt(readCookie(request, cookieName) ?? "", 10);
+    const destination = pickDestination(link, {
+      platform: visitor.platform,
+      country: visitor.country,
+      stickyVariant: Number.isNaN(sticky) ? null : sticky,
+    });
+    const target = link.forwardQuery
+      ? forwardQueryParams(destination.url, url.searchParams)
+      : destination.url;
+
+    track(target, counted);
+
+    const response = link.cloaked
+      ? new NextResponse(
+          cloakHtml({
+            url: target,
+            title: link.title ?? displayShortUrl(link.shortCode, { domain: link.domain }),
+            hideReferrer: link.hideReferrer,
+          }),
+          { headers: { "Content-Type": "text/html; charset=utf-8" } },
+        )
+      : NextResponse.redirect(target, link.redirectType);
+
+    decorate(response, link, visitor);
+    for (const [key, value] of Object.entries(limit.headers)) response.headers.set(key, value);
+    if (destination.variant !== null) {
+      response.cookies.set(cookieName, String(destination.variant), {
+        maxAge: AB_COOKIE_MAX_AGE,
+        httpOnly: true,
+        sameSite: "lax",
+        path: `/${encodeURIComponent(shortCode)}`,
+      });
+    }
+    return response;
   } catch (error) {
     console.error("[redirect] Failed to process redirect:", error);
     return NextResponse.json(
@@ -130,6 +165,51 @@ export async function GET(request: Request, ctx: RouteContext<"/[shortCode]">) {
   }
 }
 
+function decorate(response: NextResponse, link: RedirectLink, visitor: VisitorInfo) {
+  // Temporary redirects must not be cached, or repeat visits skip analytics
+  // and an edited destination keeps serving the old one. A 301/308 is the
+  // owner's explicit choice to let browsers cache it.
+  if (link.redirectType === 302 || link.redirectType === 307 || link.cloaked) {
+    response.headers.set("Cache-Control", "private, no-cache, no-store, max-age=0");
+  }
+  // A Referrer-Policy on the redirect response applies to the next hop, so
+  // the destination sees no referrer at all.
+  if (link.hideReferrer) response.headers.set("Referrer-Policy", "no-referrer");
+  response.headers.set("X-Robots-Tag", "noindex");
+  if (visitor.isBot) response.headers.set("Vary", "User-Agent");
+}
+
+function previewCard(link: RedirectLink, request: Request) {
+  const shortUrl = buildShortUrl(link.shortCode, { domain: link.domain, request });
+  const html = link.hasPassword
+    ? previewCardHtml({
+        title: link.ogTitle ?? "Password-protected link",
+        description: link.ogDescription ?? "Open the link and enter the password to continue.",
+        image: link.ogImage,
+        url: shortUrl,
+        siteName: config.siteName,
+      })
+    : previewCardHtml({
+        title: link.ogTitle ?? link.title ?? shortUrl,
+        description: link.ogDescription,
+        image: link.ogImage,
+        url: shortUrl,
+        siteName: config.siteName,
+      });
+  return new NextResponse(html, {
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=300" },
+  });
+}
+
+function plainRedirect(target: string) {
+  return noStore(NextResponse.redirect(target, 302));
+}
+
+function noStore(response: NextResponse) {
+  response.headers.set("Cache-Control", "no-store");
+  return response;
+}
+
 /**
  * Send visitors to a real, routable notice page.
  *
@@ -137,26 +217,14 @@ export async function GET(request: Request, ctx: RouteContext<"/[shortCode]">) {
  * the internal `_not-found` entry, so `/not-found` has no static route and
  * falls through to this very `/[shortCode]` handler. Redirecting there looked
  * up a link named "not-found", missed, and redirected again - an infinite 302
- * loop ending in ERR_TOO_MANY_REDIRECTS.
- *
- * `/link-missing` and `/link-expired` are real pages. Static routes take
- * precedence over the dynamic `[shortCode]` segment, so these resolve to the
- * notice pages and the loop cannot recur.
+ * loop. The notice pages are real routes, which take precedence over the
+ * dynamic segment, so the loop cannot recur.
  */
-function notFoundResponse(shortCode: string, request: Request) {
-  return noticeRedirect("/link-missing", shortCode, request);
-}
-
-function expiredResponse(shortCode: string, request: Request) {
-  return noticeRedirect("/link-expired", shortCode, request);
-}
-
-function noticeRedirect(path: string, shortCode: string, request: Request) {
+function notice(path: string, shortCode: string, request: Request, extra?: Record<string, string>) {
   const target = new URL(path, request.url);
   target.searchParams.set("code", shortCode);
-  const response = NextResponse.redirect(target, 302);
-  // Never let a browser or CDN cache the "missing" verdict: the owner may
-  // create or renew that short code at any time.
-  response.headers.set("Cache-Control", "no-store");
-  return response;
+  for (const [key, value] of Object.entries(extra ?? {})) target.searchParams.set(key, value);
+  // Never let a browser or CDN cache the verdict: the owner may create,
+  // renew or re-enable that short code at any time.
+  return noStore(NextResponse.redirect(target, 302));
 }

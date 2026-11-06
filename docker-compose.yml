@@ -1,0 +1,71 @@
+# Linkly self-hosting stack: Postgres + one-shot schema sync + the app.
+#
+#   cp .env.docker.example .env.docker   # then edit it
+#   docker compose up -d --build
+#
+# Behind a company registry? Pass your .npmrc as a build secret, see
+# docs/self-hosting.md. Redis is optional (set UPSTASH_REDIS_REST_* in
+# .env.docker to use it); without it the app uses in-memory cache and rate
+# limiting, which is fine for a single instance.
+
+secrets:
+  npmrc:
+    # Path to an .npmrc pointing at your organisation's registry.
+    file: ${NPMRC_FILE:-${HOME}/.npmrc}
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-linkly}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-linkly}
+      POSTGRES_DB: ${POSTGRES_DB:-linkly}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      target: migrate
+      args:
+        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
+      secrets:
+        - npmrc
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-linkly}:${POSTGRES_PASSWORD:-linkly}@db:5432/${POSTGRES_DB:-linkly}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      target: runner
+      args:
+        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      secrets:
+        - npmrc
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-linkly}:${POSTGRES_PASSWORD:-linkly}@db:5432/${POSTGRES_DB:-linkly}
+      AUTH_TRUST_HOST: "true"
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:

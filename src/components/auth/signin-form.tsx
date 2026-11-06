@@ -57,7 +57,14 @@ export function SignInForm() {
       });
 
       if (result?.error) {
-        setError("Invalid email or password");
+        const code = (result as { code?: string }).code;
+        setError(
+          code === "rate_limited"
+            ? "Too many sign-in attempts. Please wait a few minutes."
+            : code === "banned"
+              ? "This account has been suspended."
+              : "Invalid email or password",
+        );
       } else {
         router.push(callbackUrl);
       }
@@ -109,7 +116,12 @@ export function SignInForm() {
           Forgot password?
         </Link>
       </div>
-      <Button>
+      {/* Base UI buttons default to type="button", which never submits a form. */}
+      <Button
+        type="submit"
+        disabled={loading}
+        className="h-12 rounded-[var(--radius-pill)] text-[15px] font-semibold"
+      >
         {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
         Sign In
       </Button>

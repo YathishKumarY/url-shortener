@@ -1,140 +1,66 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { cacheDel } from "@/lib/cache";
-import { prisma } from "@/lib/prisma";
-import { updateLinkSchema, formatZodErrors } from "@/lib/validators";
+import { requireUser } from "@/lib/api-auth";
+import { jsonError, readJson, validationError } from "@/lib/http";
+import {
+  deleteLinks,
+  findOwnedLink,
+  linkErrorResponse,
+  serializeLink,
+  updateLink,
+} from "@/lib/links";
+import { enforceRateLimit, userWriteLimiter } from "@/lib/rate-limit";
+import { updateLinkSchema } from "@/lib/validators";
 
-export async function GET(_request: Request, ctx: RouteContext<"/api/links/[id]">) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export async function GET(request: Request, ctx: RouteContext<"/api/links/[id]">) {
+  const auth = await requireUser(request);
+  if (!auth.ok) return auth.response;
   const { id } = await ctx.params;
 
   try {
-    const link = await prisma.link.findUnique({
-      where: { id, userId: session.user.id },
-    });
-
-    if (!link) {
-      return NextResponse.json({ error: "Link not found" }, { status: 404 });
-    }
-
-    return NextResponse.json(link);
-  } catch (error) {
-    console.error("[links] Failed to fetch link:", error);
-    return NextResponse.json({ error: "Failed to fetch link. Please try again." }, { status: 500 });
+    const link = await findOwnedLink(id, auth.user.id);
+    if (!link) return jsonError("Link not found", 404);
+    return NextResponse.json(serializeLink(link, request));
+  } catch (err) {
+    return linkErrorResponse(err);
   }
 }
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/links/[id]">) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+  const auth = await requireUser(request);
+  if (!auth.ok) return auth.response;
   const { id } = await ctx.params;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid request body. Please send valid JSON." },
-      { status: 400 },
-    );
-  }
+  const limit = await enforceRateLimit(userWriteLimiter, `user:${auth.user.id}`);
+  if (!limit.ok) return limit.response;
 
-  const parsed = updateLinkSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json({ error: formatZodErrors(parsed.error) }, { status: 400 });
-  }
+  const body = await readJson(request);
+  if (!body.ok) return body.response;
+  const parsed = updateLinkSchema.safeParse(body.body);
+  if (!parsed.success) return validationError(parsed.error);
 
   try {
-    const link = await prisma.link.findUnique({
-      where: { id, userId: session.user.id },
-    });
+    const link = await findOwnedLink(id, auth.user.id);
+    if (!link) return jsonError("Link not found", 404);
+    if (link.bannedAt) return jsonError("This link was disabled by a moderator", 403);
 
-    if (!link) {
-      return NextResponse.json({ error: "Link not found" }, { status: 404 });
-    }
-
-    const updateData: Record<string, unknown> = {};
-    const { customAlias, expiresAt, originalUrl } = parsed.data;
-
-    if (typeof customAlias === "string" && customAlias !== "") {
-      if (customAlias !== link.customAlias && customAlias !== link.shortCode) {
-        const existing = await prisma.link.findUnique({
-          where: { shortCode: customAlias },
-        });
-        if (existing && existing.id !== id) {
-          return NextResponse.json({ error: "This alias is already taken" }, { status: 409 });
-        }
-        updateData.shortCode = customAlias;
-        updateData.customAlias = customAlias;
-      }
-    }
-
-    if (expiresAt !== undefined) {
-      updateData.expiresAt = expiresAt ? new Date(expiresAt) : null;
-    }
-
-    if (typeof originalUrl === "string" && originalUrl !== "") {
-      updateData.originalUrl = originalUrl;
-    }
-
-    if (Object.keys(updateData).length === 0) {
-      return NextResponse.json(link);
-    }
-
-    const updated = await prisma.link.update({
-      where: { id },
-      data: updateData,
-    });
-
-    // Drop the cache for both the old and the new code after any change.
-    // Expiry edits matter as much as URL edits here: the cached entry carries
-    // its own expiresAt, so leaving it in place would keep serving the old
-    // expiry (or keep a freshly expired link alive) for up to a day.
-    const staleKeys = new Set([`link:${link.shortCode}`, `link:${updated.shortCode}`]);
-    await Promise.all(Array.from(staleKeys).map((key) => cacheDel(key)));
-
-    return NextResponse.json(updated);
-  } catch (error) {
-    console.error("[links] Failed to update link:", error);
-    return NextResponse.json(
-      { error: "Failed to update link. Please try again." },
-      { status: 500 },
-    );
+    const updated = await updateLink({ link, input: parsed.data, userId: auth.user.id, request });
+    return NextResponse.json(serializeLink(updated, request));
+  } catch (err) {
+    return linkErrorResponse(err);
   }
 }
 
-export async function DELETE(_request: Request, ctx: RouteContext<"/api/links/[id]">) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export async function DELETE(request: Request, ctx: RouteContext<"/api/links/[id]">) {
+  const auth = await requireUser(request);
+  if (!auth.ok) return auth.response;
   const { id } = await ctx.params;
 
   try {
-    const link = await prisma.link.findUnique({
-      where: { id, userId: session.user.id },
-    });
-
-    if (!link) {
-      return NextResponse.json({ error: "Link not found" }, { status: 404 });
-    }
-
-    await Promise.all([prisma.link.delete({ where: { id } }), cacheDel(`link:${link.shortCode}`)]);
-
+    const link = await findOwnedLink(id, auth.user.id);
+    if (!link) return jsonError("Link not found", 404);
+    await deleteLinks(auth.user.id, [link]);
     return new NextResponse(null, { status: 204 });
-  } catch (error) {
-    console.error("[links] Failed to delete link:", error);
-    return NextResponse.json(
-      { error: "Failed to delete link. Please try again." },
-      { status: 500 },
-    );
+  } catch (err) {
+    return linkErrorResponse(err);
   }
 }

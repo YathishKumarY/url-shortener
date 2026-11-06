@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Linkly</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body class="popup">
+    <header>
+      <img src="icons/icon32.png" alt="" width="24" height="24" />
+      <span class="brand">Linkly</span>
+    </header>
+
+    <section id="setup" hidden>
+      <h2>Connect your instance</h2>
+      <p>Add your Linkly URL and an API key to start shortening links from the browser.</p>
+      <button id="openOptions" class="btn primary" type="button">Open settings</button>
+    </section>
+
+    <section id="blocked" hidden>
+      <p id="blockedMsg" class="status error"></p>
+    </section>
+
+    <form id="shortenForm" hidden autocomplete="off">
+      <div class="card">
+        <div id="pageTitle" class="title"></div>
+        <div id="pageUrl" class="url"></div>
+      </div>
+      <label for="alias">Custom alias <span class="muted">(optional)</span></label>
+      <input id="alias" type="text" placeholder="my-link" spellcheck="false" />
+      <button id="shorten" class="btn primary" type="submit">Shorten</button>
+    </form>
+
+    <section id="result" hidden>
+      <div class="short" id="shortUrl"></div>
+      <div class="row">
+        <button id="copy" class="btn primary" type="button">Copy</button>
+        <button id="open" class="btn" type="button">Open</button>
+        <button id="stats" class="btn" type="button">View stats</button>
+      </div>
+      <p id="copied" class="status ok" role="status" aria-live="polite"></p>
+      <img id="qr" class="qr" alt="QR code for the short link" width="160" height="160" hidden />
+      <button id="another" class="btn link" type="button">Shorten another</button>
+    </section>
+
+    <p id="error" class="status error" role="alert" hidden></p>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

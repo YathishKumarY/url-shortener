@@ -1,184 +1,124 @@
 import { NextResponse } from "next/server";
-import { buildShortUrl } from "@/lib/app-url";
-import { auth } from "@/lib/auth";
-import { cacheSet } from "@/lib/cache";
-import { generateShortCode } from "@/lib/nanoid";
+import type { Prisma } from "@/generated/prisma/client";
+import { getRequestUser, requireUser } from "@/lib/api-auth";
+import { createClaimToken } from "@/lib/claim";
+import { config } from "@/lib/config";
+import { jsonError, readJson, validationError } from "@/lib/http";
+import {
+  createLink,
+  linkErrorResponse,
+  linkInclude,
+  serializeLink,
+  statusWhere,
+} from "@/lib/links";
 import { prisma } from "@/lib/prisma";
-import { createLinkLimiter, getClientIp } from "@/lib/rate-limit";
-import { createLinkSchema, linkQuerySchema, formatZodErrors } from "@/lib/validators";
-
-const CACHE_TTL_SECONDS = 86400;
-
-/**
- * Detect a unique-constraint violation by Prisma's error code rather than by
- * matching on the message text, which is not part of Prisma's stable API and
- * changes with locale and version.
- */
-function isUniqueConstraintError(err: unknown): boolean {
-  return typeof err === "object" && err !== null && "code" in err && err.code === "P2002";
-}
+import {
+  createLinkLimiter,
+  enforceRateLimit,
+  getClientIp,
+  userWriteLimiter,
+} from "@/lib/rate-limit";
+import { createLinkSchema, linkQuerySchema } from "@/lib/validators";
 
 export async function POST(request: Request) {
-  const ip = getClientIp(request);
+  const user = await getRequestUser(request);
+  if (!user && config.anonymousLinksDisabled) {
+    return jsonError("Sign in to create links on this instance", 401);
+  }
+
+  const limit = user
+    ? await enforceRateLimit(userWriteLimiter, `user:${user.id}`)
+    : await enforceRateLimit(createLinkLimiter, getClientIp(request));
+  if (!limit.ok) return limit.response;
+
+  const body = await readJson(request);
+  if (!body.ok) return body.response;
+
+  const parsed = createLinkSchema.safeParse(body.body);
+  if (!parsed.success) return validationError(parsed.error);
+
   try {
-    const { success, limit, remaining, reset } = await createLinkLimiter.limit(ip);
-    const headers = {
-      "X-RateLimit-Limit": String(limit),
-      "X-RateLimit-Remaining": String(remaining),
-      "X-RateLimit-Reset": String(reset),
-    };
-    if (!success) {
-      return NextResponse.json(
-        { error: "Too many requests. Please try again later." },
-        { status: 429, headers },
-      );
-    }
+    const link = await createLink({ input: parsed.data, userId: user?.id ?? null, request });
+    const payload = serializeLink(link, request);
+    // Anonymous creators get a token to claim the link after signing up.
+    const claimToken = user ? null : createClaimToken(link.id);
+    return NextResponse.json(claimToken ? { ...payload, claimToken } : payload, {
+      status: 201,
+      headers: limit.headers,
+    });
   } catch (err) {
-    console.error("[links] Rate limit check failed:", err);
-  }
-
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid request body. Please send valid JSON." },
-      { status: 400 },
-    );
-  }
-
-  const parsed = createLinkSchema.safeParse(body);
-
-  if (!parsed.success) {
-    return NextResponse.json({ error: formatZodErrors(parsed.error) }, { status: 400 });
-  }
-
-  const { url, customAlias, expiresAt } = parsed.data;
-
-  const session = await auth();
-  const userId = session?.user?.id ?? null;
-
-  try {
-    let shortCode: string = customAlias ? customAlias : generateShortCode();
-
-    let link;
-    let attempts = 0;
-    const maxAttempts = customAlias ? 1 : 5;
-
-    while (attempts < maxAttempts) {
-      try {
-        link = await prisma.link.create({
-          data: {
-            shortCode,
-            originalUrl: url,
-            customAlias: customAlias ?? null,
-            userId,
-            expiresAt: expiresAt ? new Date(expiresAt) : null,
-          },
-        });
-        break;
-      } catch (err: unknown) {
-        if (!isUniqueConstraintError(err)) throw err;
-        if (customAlias) {
-          return NextResponse.json({ error: "This alias is already taken" }, { status: 409 });
-        }
-        shortCode = generateShortCode();
-        attempts++;
-      }
-    }
-
-    if (!link) {
-      return NextResponse.json(
-        { error: "Unable to generate a unique short code. Please try again." },
-        { status: 503 },
-      );
-    }
-
-    const expiresAtMs = link.expiresAt ? new Date(link.expiresAt).getTime() : null;
-    const ttl = expiresAtMs
-      ? Math.min(CACHE_TTL_SECONDS, Math.ceil((expiresAtMs - Date.now()) / 1000))
-      : CACHE_TTL_SECONDS;
-    if (ttl > 0) {
-      // Same shape the redirect handler expects, so it can honour expiry
-      // without a database round trip.
-      await cacheSet(
-        `link:${link.shortCode}`,
-        JSON.stringify({ id: link.id, originalUrl: url, expiresAt: expiresAtMs }),
-        ttl,
-      );
-    }
-
-    return NextResponse.json(
-      {
-        id: link.id,
-        shortCode: link.shortCode,
-        shortUrl: buildShortUrl(link.shortCode, request),
-        originalUrl: link.originalUrl,
-        createdAt: link.createdAt,
-      },
-      { status: 201 },
-    );
-  } catch (error) {
-    console.error("[links] Failed to create link:", error);
-    return NextResponse.json(
-      { error: "Failed to create link. Please try again." },
-      { status: 500 },
-    );
+    return linkErrorResponse(err);
   }
 }
 
 export async function GET(request: Request) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireUser(request);
+  if (!auth.ok) return auth.response;
 
   const { searchParams } = new URL(request.url);
   const parsed = linkQuerySchema.safeParse({
-    page: searchParams.get("page") ?? "1",
+    page: searchParams.get("page") ?? undefined,
     // Accept `pageSize` as an alias for `limit` so either naming works.
-    limit: searchParams.get("limit") ?? searchParams.get("pageSize") ?? "20",
-    search: searchParams.get("search") ?? undefined,
+    limit: searchParams.get("limit") ?? searchParams.get("pageSize") ?? undefined,
+    search: searchParams.get("search") || undefined,
+    status: searchParams.get("status") || undefined,
+    tag: searchParams.get("tag") || undefined,
+    domain: searchParams.get("domain") ?? undefined,
+    sort: searchParams.get("sort") || undefined,
+    order: searchParams.get("order") || undefined,
   });
+  if (!parsed.success) return validationError(parsed.error);
 
-  if (!parsed.success) {
-    return NextResponse.json({ error: formatZodErrors(parsed.error) }, { status: 400 });
+  const { page, limit, search, status, tag, domain, sort, order } = parsed.data;
+
+  const filters: Prisma.LinkWhereInput[] = [{ userId: auth.user.id }, statusWhere(status)];
+  if (search) {
+    filters.push({
+      OR: [
+        { shortCode: { contains: search, mode: "insensitive" } },
+        { originalUrl: { contains: search, mode: "insensitive" } },
+        { title: { contains: search, mode: "insensitive" } },
+        { description: { contains: search, mode: "insensitive" } },
+      ],
+    });
   }
+  if (tag) filters.push({ tags: { some: { id: tag } } });
+  if (domain !== undefined) filters.push({ domain: domain === "default" ? "" : domain });
+  const where: Prisma.LinkWhereInput = { AND: filters };
 
-  const { page, limit, search } = parsed.data;
-  const skip = (page - 1) * limit;
+  const orderBy: Prisma.LinkOrderByWithRelationInput[] =
+    sort === "clicks"
+      ? [{ clickCount: order }]
+      : sort === "lastClickedAt"
+        ? [{ lastClickedAt: { sort: order, nulls: "last" } }]
+        : sort === "title"
+          ? [{ title: { sort: order, nulls: "last" } }]
+          : [{ createdAt: order }];
+  orderBy.push({ id: "desc" });
 
   try {
-    const where = {
-      userId: session.user.id,
-      ...(search
-        ? {
-            OR: [
-              { shortCode: { contains: search, mode: "insensitive" as const } },
-              { originalUrl: { contains: search, mode: "insensitive" as const } },
-            ],
-          }
-        : {}),
-    };
-
     const [links, total] = await Promise.all([
       prisma.link.findMany({
         where,
-        orderBy: { createdAt: "desc" },
-        skip,
+        orderBy,
+        skip: (page - 1) * limit,
         take: limit,
+        include: linkInclude,
       }),
       prisma.link.count({ where }),
     ]);
 
-    // `pageSize` mirrors `limit` so clients using either name agree with the
-    // value actually applied to the query.
-    return NextResponse.json({ links, total, page, limit, pageSize: limit });
+    return NextResponse.json({
+      links: links.map((link) => serializeLink(link, request)),
+      total,
+      page,
+      limit,
+      // `pageSize` mirrors `limit` for clients using either name.
+      pageSize: limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    });
   } catch (error) {
     console.error("[links] Failed to fetch links:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch links. Please try again." },
-      { status: 500 },
-    );
+    return jsonError("Failed to fetch links. Please try again.", 500);
   }
 }
