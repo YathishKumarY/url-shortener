@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { config } from "@/lib/config";
-import { sendVerificationEmail } from "@/lib/email";
 import { prisma } from "@/lib/prisma";
 import { authLimiter, getClientIp } from "@/lib/rate-limit";
-import { generateEmailVerificationToken } from "@/lib/tokens";
 import { registerSchema, formatZodErrors } from "@/lib/validators";
+import { sendVerificationLink } from "@/lib/verification";
 
 export async function POST(request: Request) {
   if (config.registrationDisabled) {
@@ -57,31 +56,41 @@ export async function POST(request: Request) {
     const existing = await prisma.user.findFirst({
       where: { email: { equals: email, mode: "insensitive" } },
     });
-    if (existing) {
+    // A verified account, or one created through Google/GitHub (no password),
+    // belongs to someone who has proved they own the address.
+    if (existing && (existing.emailVerified || !existing.password || existing.bannedAt)) {
       return NextResponse.json(
-        { error: "An account with this email already exists" },
+        { error: "An account with this email already exists. Sign in instead." },
         { status: 409 },
       );
     }
 
     const hashedPassword = await bcrypt.hash(password, 12);
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-        role: config.adminEmails.includes(email) ? "ADMIN" : "USER",
-      },
-    });
-
-    try {
-      const token = await generateEmailVerificationToken(email);
-      await sendVerificationEmail(email, token.token);
-    } catch (err) {
-      console.error("[auth] Failed to send verification email:", err);
+    if (existing) {
+      // Signing up again before verifying (lost email, typo in the password):
+      // replace the pending details. Nobody could sign in to it yet, so it
+      // holds no data, and the new link still only goes to the address owner.
+      await prisma.user.update({
+        where: { id: existing.id },
+        data: { name, password: hashedPassword },
+      });
+    } else {
+      await prisma.user.create({
+        data: {
+          name,
+          email,
+          password: hashedPassword,
+          role: config.adminEmails.includes(email) ? "ADMIN" : "USER",
+        },
+      });
     }
 
-    return NextResponse.json({ id: user.id, name: user.name, email: user.email }, { status: 201 });
+    // The account cannot sign in until the emailed link is opened.
+    const sent = await sendVerificationLink(email);
+    return NextResponse.json(
+      { verificationRequired: true, email, emailSent: sent !== "failed" },
+      { status: 201 },
+    );
   } catch (error) {
     console.error("[auth] Registration failed:", error);
     return NextResponse.json({ error: "Registration failed. Please try again." }, { status: 500 });

@@ -4,6 +4,7 @@ import Credentials from "next-auth/providers/credentials";
 import GitHub from "next-auth/providers/github";
 import Google from "next-auth/providers/google";
 import { config } from "@/lib/config";
+import { oauthEmailVerified } from "@/lib/oauth-email";
 import { prisma } from "@/lib/prisma";
 import { getClientIp, signInLimiter } from "@/lib/rate-limit";
 import type { Provider } from "next-auth/providers";
@@ -16,8 +17,19 @@ class BannedSignin extends CredentialsSignin {
   code = "banned";
 }
 
+class EmailNotVerifiedSignin extends CredentialsSignin {
+  code = "email_not_verified";
+}
+
 function isAdminEmail(email: string | null | undefined): boolean {
   return !!email && config.adminEmails.includes(email.toLowerCase());
+}
+
+/** Emails are stored lower-case, but older rows and providers may differ in case. */
+function findUserByEmail(email: string) {
+  return prisma.user.findFirst({
+    where: { email: { equals: email.trim(), mode: "insensitive" } },
+  });
 }
 
 /**
@@ -72,6 +84,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const valid = await bcrypt.compare(String(credentials.password), user.password);
         if (!valid) return null;
         if (user.bannedAt) throw new BannedSignin();
+        // Checked after the password, so the answer reveals nothing to
+        // someone who does not already know it.
+        if (!user.emailVerified) throw new EmailNotVerifiedSignin();
 
         return { id: user.id, name: user.name, email: user.email, image: user.image };
       },
@@ -83,30 +98,48 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     error: "/auth/signin",
   },
   callbacks: {
-    async signIn({ user, account }) {
-      if (account?.provider === "credentials") return true;
-      if (!user.email) return false;
+    async signIn({ user, account, profile }) {
+      if (!account || account.provider === "credentials") return true;
+      if (!user.email) return "/auth/signin?error=EmailRequired";
+      const email = user.email.trim().toLowerCase();
 
-      const existing = await prisma.user.findUnique({ where: { email: user.email } });
+      const verified = await oauthEmailVerified(
+        account.provider,
+        email,
+        profile as Record<string, unknown> | undefined,
+        account.access_token,
+      );
+      if (!verified) return "/auth/signin?error=EmailUnverified";
+
+      const existing = await findUserByEmail(email);
       if (existing?.bannedAt) return "/auth/signin?error=AccountBanned";
 
       if (!existing) {
         if (config.registrationDisabled) return "/auth/signin?error=RegistrationDisabled";
         await prisma.user.create({
           data: {
-            email: user.email,
+            email,
             name: user.name,
             image: user.image,
             emailVerified: new Date(),
-            role: isAdminEmail(user.email) ? "ADMIN" : "USER",
+            role: isAdminEmail(email) ? "ADMIN" : "USER",
           },
+        });
+      } else if (!existing.emailVerified) {
+        // The provider has just proved the address. Any password on the
+        // account was set by whoever signed up without verifying, possibly
+        // not this person, so it stops working; "Forgot password" sets a
+        // new one.
+        await prisma.user.update({
+          where: { id: existing.id },
+          data: { emailVerified: new Date(), password: null },
         });
       }
       return true;
     },
     async jwt({ token, user }) {
       if (user?.email) {
-        let dbUser = await prisma.user.findUnique({ where: { email: user.email } });
+        let dbUser = await findUserByEmail(user.email);
         if (dbUser && dbUser.role !== "ADMIN" && isAdminEmail(dbUser.email)) {
           dbUser = await prisma.user.update({ where: { id: dbUser.id }, data: { role: "ADMIN" } });
         }

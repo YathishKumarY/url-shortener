@@ -116,6 +116,12 @@ npx prisma db push            # review the warning
 npx prisma db push --accept-data-loss
 ```
 
+Email/password accounts now have to verify their address before they can sign in. Accounts created before this change were never asked to, so mark them verified once, or their owners are locked out:
+
+```bash
+echo 'UPDATE "User" SET "emailVerified" = "createdAt" WHERE "emailVerified" IS NULL;' | npx prisma db execute --stdin
+```
+
 ### Hosting the database on Prisma Postgres (free tier, works with Vercel)
 
 Prisma Postgres is managed PostgreSQL with a built-in connection pooler. Each database has a pooled connection string (`pooled.db.prisma.io`) and a direct one (`db.prisma.io`). Vercel functions scale out and every instance opens its own connections, so the app must use the pooled string; the Free plan allows 10 direct connections.
@@ -132,21 +138,23 @@ Vercel's Prisma Postgres integration (Storage tab) also works: it sets `DATABASE
 
 Every option is documented in [.env.example](.env.example). The essentials:
 
-| Variable                                          | Purpose                                                                   |
-| ------------------------------------------------- | ------------------------------------------------------------------------- |
-| `DATABASE_URL`                                    | PostgreSQL connection string (required)                                   |
-| `DATABASE_URL_POOLED` / `DIRECT_URL`              | Pooled string for the app, direct string for `prisma db push` (see below) |
-| `AUTH_SECRET`, `AUTH_URL`                         | NextAuth (required)                                                       |
-| `NEXT_PUBLIC_APP_URL`                             | Public origin used in short URLs and QR codes (required)                  |
-| `IP_HASH_SALT`                                    | Secret salt for visitor IP hashes (strongly recommended)                  |
-| `UPSTASH_REDIS_REST_URL` / `_TOKEN`               | Shared cache and rate limits across instances (optional)                  |
-| `AUTH_GOOGLE_*`, `AUTH_GITHUB_*`                  | OAuth sign-in (optional; buttons appear only when set)                    |
-| `AUTH_OIDC_ISSUER`, `_ID`, `_SECRET`, `_NAME`     | Single sign-on with any OpenID Connect provider                           |
-| `ADMIN_EMAILS`                                    | Accounts promoted to admin                                                |
-| `DISABLE_REGISTRATION`, `DISABLE_ANONYMOUS_LINKS` | Private / invite-only instances                                           |
-| `ALLOWED_DOMAINS`                                 | Restrict destinations to these domains                                    |
-| `GOOGLE_SAFE_BROWSING_API_KEY`                    | Screen destinations for malware and phishing                              |
-| `GEOLOCATION_PROVIDER`                            | IP geolocation when your host sends no country header (`none` by default) |
+| Variable                                          | Purpose                                                                              |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `DATABASE_URL`                                    | PostgreSQL connection string (required)                                              |
+| `DATABASE_URL_POOLED` / `DIRECT_URL`              | Pooled string for the app, direct string for `prisma db push` (see below)            |
+| `AUTH_SECRET`, `AUTH_URL`                         | NextAuth (required)                                                                  |
+| `NEXT_PUBLIC_APP_URL`                             | Public origin used in short URLs and QR codes (required)                             |
+| `IP_HASH_SALT`                                    | Secret salt for visitor IP hashes (strongly recommended)                             |
+| `UPSTASH_REDIS_REST_URL` / `_TOKEN`               | Shared cache and rate limits across instances (optional)                             |
+| `SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD`        | Sends verification and reset emails; a Gmail app password works (see `.env.example`) |
+| `RESEND_API_KEY`, `EMAIL_FROM`                    | Alternative sender (needs your own domain); sender address                           |
+| `AUTH_GOOGLE_*`, `AUTH_GITHUB_*`                  | OAuth sign-in (optional; buttons appear only when set)                               |
+| `AUTH_OIDC_ISSUER`, `_ID`, `_SECRET`, `_NAME`     | Single sign-on with any OpenID Connect provider                                      |
+| `ADMIN_EMAILS`                                    | Accounts promoted to admin                                                           |
+| `DISABLE_REGISTRATION`, `DISABLE_ANONYMOUS_LINKS` | Private / invite-only instances                                                      |
+| `ALLOWED_DOMAINS`                                 | Restrict destinations to these domains                                               |
+| `GOOGLE_SAFE_BROWSING_API_KEY`                    | Screen destinations for malware and phishing                                         |
+| `GEOLOCATION_PROVIDER`                            | IP geolocation when your host sends no country header (`none` by default)            |
 
 ## Scripts
 

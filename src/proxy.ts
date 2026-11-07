@@ -12,6 +12,11 @@ import type { NextRequest } from "next/server";
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  if (pathname.startsWith("/auth/")) {
+    const canonical = canonicalAuthUrl(request);
+    if (canonical) return NextResponse.redirect(canonical);
+  }
+
   // /@handle -> link-in-bio page
   if (/^\/@[^/]+$/.test(pathname)) {
     return NextResponse.rewrite(new URL(`/bio/${pathname.slice(2)}`, request.url));
@@ -39,6 +44,30 @@ export function proxy(request: NextRequest) {
   }
 
   return NextResponse.next();
+}
+
+/**
+ * Google and GitHub always send people back to AUTH_URL, but the cookies that
+ * secure the round trip (state, PKCE) are set on whichever host sign-in
+ * started from. Starting on a Vercel deployment address such as
+ * url-shortener-abc123.vercel.app therefore always failed on return. In
+ * production, move auth pages to the canonical host before anything is set.
+ * Limited to Vercel: a self-hosted reverse proxy may present an internal
+ * host here, and redirecting that would loop.
+ */
+function canonicalAuthUrl(request: NextRequest): URL | null {
+  if (process.env.VERCEL_ENV !== "production") return null;
+  const configured = process.env.AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+  if (!configured) return null;
+  let canonical: URL;
+  try {
+    canonical = new URL(configured);
+  } catch {
+    return null;
+  }
+  const host = request.headers.get("host") ?? request.nextUrl.host;
+  if (host === canonical.host) return null;
+  return new URL(request.nextUrl.pathname + request.nextUrl.search, canonical.origin);
 }
 
 export const config = {

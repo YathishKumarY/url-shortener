@@ -58,9 +58,15 @@ export async function POST(request: Request) {
       });
       if (claimed.count === 0) return null;
 
+      // Opening the emailed link proves the address, so a reset also verifies
+      // an account that never confirmed its sign-up email.
+      const user = await tx.user.findUnique({
+        where: { email: record.email },
+        select: { emailVerified: true },
+      });
       await tx.user.update({
         where: { email: record.email },
-        data: { password: hashedPassword },
+        data: { password: hashedPassword, emailVerified: user?.emailVerified ?? new Date() },
       });
 
       return record.email;

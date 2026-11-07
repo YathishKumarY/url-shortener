@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { signIn } from "next-auth/react";
+import { ResendVerification, type ResendState } from "@/components/auth/resend-verification";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -19,6 +20,8 @@ export function SignInForm() {
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [loading, setLoading] = useState(false);
+  const [unverifiedEmail, setUnverifiedEmail] = useState("");
+  const [resendState, setResendState] = useState<ResendState>("idle");
   const searchParams = useSearchParams();
   const router = useRouter();
   const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
@@ -44,6 +47,7 @@ export function SignInForm() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setUnverifiedEmail("");
 
     if (!validate()) return;
 
@@ -58,6 +62,12 @@ export function SignInForm() {
 
       if (result?.error) {
         const code = (result as { code?: string }).code;
+        if (code === "email_not_verified") {
+          setUnverifiedEmail(email.trim());
+          setResendState("idle");
+          setError("Verify your email first. Open the link we sent you, then sign in.");
+          return;
+        }
         setError(
           code === "rate_limited"
             ? "Too many sign-in attempts. Please wait a few minutes."
@@ -77,7 +87,14 @@ export function SignInForm() {
 
   return (
     <form onSubmit={handleSubmit} className="grid gap-4">
-      {error && <p className="text-destructive text-center text-sm">{error}</p>}
+      {error && (
+        <p role="alert" className="text-destructive text-center text-sm">
+          {error}
+        </p>
+      )}
+      {unverifiedEmail && (
+        <ResendVerification email={unverifiedEmail} state={resendState} onState={setResendState} />
+      )}
       <div>
         <Input
           type="email"

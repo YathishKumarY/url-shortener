@@ -13,7 +13,19 @@ function createRedis(): Redis | null {
   const url = process.env.UPSTASH_REDIS_REST_URL?.trim();
   const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
   if (!url || !token) return null;
-  return new Redis({ url, token });
+  return new Redis({
+    url,
+    token,
+    // Every caller treats Redis as optional and falls back on errors, so a
+    // slow failure is worse than a fast one. The client's default of five
+    // retries with exponential backoff spent about 4 seconds per command when
+    // the database was unreachable, and a redirect makes three commands.
+    retry: { retries: 1, backoff: () => 100 },
+    signal: () => AbortSignal.timeout(REDIS_TIMEOUT_MS),
+  });
 }
+
+/** Give up on a Redis command after this long and use the fallback. */
+const REDIS_TIMEOUT_MS = 1500;
 
 export const redis = createRedis();

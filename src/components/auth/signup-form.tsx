@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
-import { signIn } from "next-auth/react";
+import Link from "next/link";
+import { Loader2, MailCheck } from "lucide-react";
+import { ResendVerification, type ResendState } from "@/components/auth/resend-verification";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -20,7 +20,9 @@ export function SignUpForm() {
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
+  const [sentTo, setSentTo] = useState("");
+  const [resendState, setResendState] = useState<ResendState>("idle");
+  const [firstSendFailed, setFirstSendFailed] = useState(false);
 
   function validate(): boolean {
     const errors: FieldErrors = {};
@@ -91,28 +93,53 @@ export function SignUpForm() {
         return;
       }
 
-      const result = await signIn("credentials", {
-        email: email.trim(),
-        password,
-        redirect: false,
-      });
-
+      // The account stays locked until the emailed link is opened.
+      const data = (await res.json().catch(() => null)) as { emailSent?: boolean } | null;
       setLoading(false);
-
-      if (result?.error) {
-        setError("Account created but sign-in failed. Please sign in manually.");
-      } else {
-        router.push("/dashboard");
-      }
+      setFirstSendFailed(data?.emailSent === false);
+      setSentTo(email.trim());
     } catch {
       setLoading(false);
       setError("Something went wrong. Please check your connection and try again.");
     }
   }
 
+  if (sentTo) {
+    return (
+      <div
+        role="status"
+        className="border-border bg-card grid justify-items-center gap-3 rounded-3xl border px-6 py-8 text-center"
+      >
+        <MailCheck className="text-primary h-10 w-10" aria-hidden />
+        <h2 className="text-foreground text-lg font-semibold">Check your email</h2>
+        {firstSendFailed ? (
+          <p className="text-muted-foreground text-sm">
+            Your account is created, but we couldn&apos;t email{" "}
+            <span className="text-foreground font-medium break-all">{sentTo}</span> just now. Send
+            the verification link again in a minute.
+          </p>
+        ) : (
+          <p className="text-muted-foreground text-sm">
+            We sent a link to{" "}
+            <span className="text-foreground font-medium break-all">{sentTo}</span>. Open it to
+            activate your account, then sign in.
+          </p>
+        )}
+        <ResendVerification email={sentTo} state={resendState} onState={setResendState} />
+        <Link href="/auth/signin" className="text-primary text-sm font-semibold hover:underline">
+          Go to sign in
+        </Link>
+      </div>
+    );
+  }
+
   return (
     <form onSubmit={handleSubmit} className="grid gap-4">
-      {error && <p className="text-destructive text-center text-sm">{error}</p>}
+      {error && (
+        <p role="alert" className="text-destructive text-center text-sm">
+          {error}
+        </p>
+      )}
       <div>
         <Input
           type="text"

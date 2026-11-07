@@ -13,15 +13,22 @@ const ERRORS: Record<string, string> = {
   RegistrationDisabled: "New sign-ups are disabled on this instance. Ask an admin for an account.",
   OAuthAccountNotLinked: "That email is already registered with a different sign-in method.",
   AccessDenied: "Sign-in was denied.",
+  EmailRequired: "Your account didn't share an email address. Add one, or sign up with email.",
+  EmailUnverified:
+    "That account's email address isn't verified with the provider. Verify it there, or sign up with email.",
 };
+
+/** Auth.js reports most OAuth failures as "Configuration"; never leave the page silent. */
+const FALLBACK_ERROR = "Sign-in didn't complete. Please try again.";
 
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; verified?: string }>;
 }) {
-  const { error } = await searchParams;
-  const message = error ? (ERRORS[error] ?? null) : null;
+  const { error, verified } = await searchParams;
+  const message = error ? (ERRORS[error] ?? FALLBACK_ERROR) : null;
+  const notice = !error && verified === "1" ? "Email verified. Sign in to continue." : null;
   return (
     <div className="bg-background flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-md space-y-8">
@@ -37,8 +44,19 @@ export default async function SignInPage({
         </div>
 
         {message && (
-          <p className="bg-destructive/10 text-destructive rounded-xl px-4 py-3 text-center text-sm">
+          <p
+            role="alert"
+            className="bg-destructive/10 text-destructive rounded-xl px-4 py-3 text-center text-sm"
+          >
             {message}
+          </p>
+        )}
+        {notice && (
+          <p
+            role="status"
+            className="bg-success/10 text-success rounded-xl px-4 py-3 text-center text-sm"
+          >
+            {notice}
           </p>
         )}
 

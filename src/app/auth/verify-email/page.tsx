@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { CheckCircle, XCircle, Loader2 } from "lucide-react";
@@ -13,10 +13,15 @@ function VerifyEmailPageContent() {
   );
   const [message, setMessage] = useState(token ? "" : "Missing verification token");
 
-  useEffect(() => {
-    if (!token) return;
+  // A token works once. React's development double-run of effects would
+  // otherwise spend it on the first request and show the second's "expired".
+  const requested = useRef(false);
 
-    fetch(`/api/auth/verify-email?token=${token}`)
+  useEffect(() => {
+    if (!token || requested.current) return;
+    requested.current = true;
+
+    fetch(`/api/auth/verify-email?token=${encodeURIComponent(token)}`)
       .then(async (res) => {
         const data = await res.json();
         if (res.ok) {
@@ -53,7 +58,7 @@ function VerifyEmailPageContent() {
             <CheckCircle className="text-success h-12 w-12" />
             <p className="text-foreground text-lg font-semibold">{message}</p>
             <Link
-              href="/auth/signin"
+              href="/auth/signin?verified=1"
               className="bg-primary hover:bg-primary/90 rounded-[48px] px-6 py-3 text-sm font-semibold text-white"
             >
               Sign In
@@ -65,11 +70,14 @@ function VerifyEmailPageContent() {
           <div className="flex flex-col items-center gap-4">
             <XCircle className="text-destructive h-12 w-12" />
             <p className="text-foreground text-lg font-semibold">{message}</p>
+            <p className="text-muted-foreground text-sm">
+              Sign in with your email and password to get a new link.
+            </p>
             <Link
-              href="/auth/signup"
+              href="/auth/signin"
               className="bg-primary hover:bg-primary/90 rounded-[48px] px-6 py-3 text-sm font-semibold text-white"
             >
-              Try Again
+              Sign In
             </Link>
           </div>
         )}
