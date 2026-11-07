@@ -51,6 +51,20 @@ function enterDelay(ms: number) {
 }
 
 const FOCUS_RING = "outline-none focus-visible:outline-2 focus-visible:outline-offset-2";
+
+/*
+ * Links leave the bio page in a new tab, so visitors can come back to it.
+ * "noopener" stops the opened page from controlling this one; the referrer is
+ * kept because the short link redirect reads it for analytics. mailto: links
+ * open the mail app instead, where a new tab would only leave a blank one.
+ */
+function opensNewTab(href: string): boolean {
+  return /^https?:/i.test(href);
+}
+
+function newTab(href: string): { target?: "_blank" } {
+  return opensNewTab(href) ? { target: "_blank" } : {};
+}
 const LINKS_START = 220;
 const STAGGER = 60;
 
@@ -194,8 +208,13 @@ export function BioProfile({
                   {isPage ? (
                     <a
                       href={social.href}
+                      {...newTab(social.href)}
                       rel="me nofollow noopener"
-                      aria-label={social.label}
+                      aria-label={
+                        opensNewTab(social.href)
+                          ? `${social.label} (opens in a new tab)`
+                          : social.label
+                      }
                       title={social.label}
                       style={delay}
                       className={cn(
@@ -258,6 +277,7 @@ export function BioProfile({
                   {isPage && link.href ? (
                     <a
                       href={link.href}
+                      target="_blank"
                       rel="nofollow noopener"
                       style={delay}
                       className={cn(
@@ -268,6 +288,7 @@ export function BioProfile({
                       )}
                     >
                       {inner}
+                      <span className="sr-only"> (opens in a new tab)</span>
                     </a>
                   ) : (
                     <div style={delay} className={classes}>
