@@ -824,7 +824,7 @@ export function BioEditor({ data, user }: { data: BioResponse; user: BioEditorUs
             <PanelHeader
               icon={Link2}
               title="Links"
-              description="Choose which short links appear on your page and in what order."
+              description="Add any link, or pick from your short links, and set the order."
             />
             <LinksEditor
               links={data.links}

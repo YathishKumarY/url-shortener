@@ -9,6 +9,16 @@ export const BIO_MAX = 300;
 /** The API keeps at most this many featured links. */
 export const FEATURED_MAX = 50;
 
+/**
+ * What people paste into "Add a link": often just "linkedin.com/in/me".
+ * Adds https:// when no scheme is given; the server still validates the result.
+ */
+export function normalizeLinkInput(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
 /** An http(s) URL that is safe to use as an image source, or null. */
 export function safeImageUrl(value: string | null | undefined): string | null {
   const trimmed = value?.trim();

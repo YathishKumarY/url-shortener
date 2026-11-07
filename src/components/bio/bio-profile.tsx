@@ -101,11 +101,12 @@ export function BioProfile({
   const footerDelay = LINKS_START + Math.min(Math.max(links.length, 1), 8) * STAGGER + 60;
   const textTransition = isPage ? "" : "transition-colors duration-500";
 
+  // Every visitor of a bio page is a potential owner of one: invite them.
   const footerInner = (
     <>
       <LinklyIcon className="size-4" />
       <span>
-        Made with <span className={cn("font-semibold", t.name)}>Linkly</span>
+        Get your own <span className={cn("font-semibold", t.name)}>Linkly</span>
       </span>
     </>
   );
@@ -298,7 +299,7 @@ export function BioProfile({
       <footer className="mt-auto flex justify-center pt-12">
         {isPage ? (
           <Link
-            href="/"
+            href="/auth/signup"
             prefetch={false}
             style={enterDelay(footerDelay)}
             className={cn(footerClasses, FOCUS_RING, t.focus)}

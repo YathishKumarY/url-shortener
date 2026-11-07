@@ -2,19 +2,11 @@
 
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import {
-  ArrowDown,
-  ArrowUp,
-  Info,
-  Link2,
-  MousePointerClick,
-  Plus,
-  Search,
-  SearchX,
-} from "lucide-react";
+import { ArrowDown, ArrowUp, Info, MousePointerClick, Search, SearchX } from "lucide-react";
 import { flushSync } from "react-dom";
+import { AddBioLink } from "@/components/bio/add-bio-link";
 import { bioLinkTitle, FEATURED_MAX } from "@/components/bio/utils";
-import { EmptyState, Favicon, inputClass, pill } from "@/components/shared/ui-kit";
+import { Favicon, inputClass } from "@/components/shared/ui-kit";
 import { Switch } from "@/components/ui/switch";
 import type { BioLinkItem } from "@/hooks/use-bio";
 import { compactNumber, formatNumber } from "@/lib/format";
@@ -122,6 +114,15 @@ export function LinksEditor({ links, featured, onChange }: LinksEditorProps) {
     setAnnouncement(`Added ${bioLinkTitle(link)} to your page, position ${featuredIds.length + 1}`);
   }
 
+  /** A link just created from the "Add a link" fields goes to the end of the page. */
+  function added(link: BioLinkItem) {
+    flushSync(() => {
+      onChange([...featuredIds, link.id]);
+      setRecentlyAdded(link.id);
+    });
+    setAnnouncement(`Added ${bioLinkTitle(link)} to your page, position ${featuredIds.length + 1}`);
+  }
+
   function unfeature(link: BioLinkItem) {
     const index = featuredIds.indexOf(link.id);
     const neighbour = featuredIds[index + 1] ?? featuredIds[index - 1];
@@ -140,19 +141,23 @@ export function LinksEditor({ links, featured, onChange }: LinksEditorProps) {
     setAnnouncement(`Moved ${bioLinkTitle(link)} to position ${to + 1} of ${next.length}`);
   }
 
+  const addLink = <AddBioLink disabled={atLimit} onAdded={added} />;
+
   if (links.length === 0) {
     return (
-      <EmptyState
-        icon={Link2}
-        title="No links to feature yet"
-        description="Shorten a link and it shows up here, ready to put on your page."
-        action={
-          <Link href="/dashboard/links/new" className={pill.primary}>
-            <Plus /> New link
-          </Link>
-        }
-        className="py-10"
-      />
+      <div className="flex flex-col gap-4">
+        <p aria-live="polite" className="sr-only">
+          {announcement}
+        </p>
+        {addLink}
+        <p className="text-muted-foreground px-1 text-xs leading-relaxed">
+          Need a password, expiry date or custom alias?{" "}
+          <Link href="/dashboard/links/new" className="text-primary font-medium hover:underline">
+            Create the link in the full builder
+          </Link>{" "}
+          and switch it on here.
+        </p>
+      </div>
     );
   }
 
@@ -161,6 +166,8 @@ export function LinksEditor({ links, featured, onChange }: LinksEditorProps) {
       <p aria-live="polite" className="sr-only">
         {announcement}
       </p>
+
+      {addLink}
 
       {/* Featured, in page order */}
       <section aria-labelledby="bio-featured-heading">
@@ -175,7 +182,7 @@ export function LinksEditor({ links, featured, onChange }: LinksEditorProps) {
 
         {featuredLinks.length === 0 ? (
           <div className="border-border/80 text-muted-foreground rounded-xl border border-dashed px-4 py-6 text-center text-sm text-pretty">
-            Nothing here yet. Switch on a link below to add it to your page.
+            Nothing here yet. Add a link above, or switch on one of your links below.
           </div>
         ) : (
           <ol className="flex flex-col gap-1.5">
