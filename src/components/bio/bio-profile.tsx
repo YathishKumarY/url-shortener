@@ -365,15 +365,29 @@ export function BioProfile({
   return (
     <div
       data-bio-theme={theme.id}
-      className="relative isolate min-h-dvh overflow-x-clip antialiased"
+      className="relative isolate min-h-dvh overflow-x-clip antialiased sm:px-6 sm:py-10"
       style={{ colorScheme: theme.scheme }}
     >
-      <BioBackdrop theme={theme} className="fixed" />
-      <main className="relative mx-auto flex min-h-dvh w-full max-w-[480px] flex-col px-5 pt-16 pb-8 sm:pt-24">
+      {/* Phones: the theme fills the screen. Wider screens: it fills a card
+          that sits in a quieter, deeper room of the same palette. */}
+      <BioBackdrop theme={theme} className="fixed sm:hidden" />
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 -z-10 hidden sm:block"
+        style={{ background: theme.room }}
+      />
+      <main
+        className={cn(
+          "relative mx-auto flex min-h-dvh w-full max-w-[480px] flex-col px-5 pt-16 pb-8",
+          "sm:isolate sm:min-h-[calc(100dvh-5rem)] sm:max-w-[560px] sm:rounded-[2rem] sm:px-10 sm:pt-20 sm:pb-10",
+          t.card,
+        )}
+      >
+        <BioBackdrop theme={theme} className="absolute hidden rounded-[inherit] sm:block" />
         <BioShareButton
           path={`/@${handle}`}
           title={name}
-          className={cn("absolute top-4 right-4 sm:top-6", t.social, t.focus)}
+          className={cn("absolute top-4 right-4 sm:top-5 sm:right-5", t.social, t.focus)}
         />
         {content}
       </main>

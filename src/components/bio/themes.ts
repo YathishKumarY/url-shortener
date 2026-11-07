@@ -41,6 +41,11 @@ export interface BioTheme {
   swatch: string;
   /** Layered CSS background for the full-page canvas. */
   canvas: string;
+  /**
+   * Wider screens show the canvas as a card; this is the room it sits in. A
+   * deeper, quieter version of the same palette so the card stays the subject.
+   */
+  room: string;
   /** Opacity of the film-grain overlay (0 disables it). */
   grain: number;
   classes: {
@@ -58,6 +63,8 @@ export interface BioTheme {
     linkArrow: string;
     /** focus-visible outline colour, tuned per canvas. */
     focus: string;
+    /** Edge and lift of the card on wider screens (every class carries `sm:`). */
+    card: string;
     footer: string;
     /** Dashed placeholder rows shown in the editor preview. */
     placeholder: string;
@@ -89,6 +96,11 @@ export const BIO_THEMES: Record<BioThemeId, BioTheme> = {
       "radial-gradient(ellipse 60% 45% at 8% 100%, rgba(235,86,142,0.22), transparent 70%)",
       "linear-gradient(180deg, #0a1124 0%, #070b16 52%, #05070e 100%)",
     ].join(", "),
+    room: [
+      "radial-gradient(ellipse 45% 40% at 12% 8%, rgba(20,78,227,0.20), transparent 70%)",
+      "radial-gradient(ellipse 40% 38% at 90% 92%, rgba(235,86,142,0.13), transparent 70%)",
+      "#04060c",
+    ].join(", "),
     grain: 0.08,
     classes: {
       name: "text-white",
@@ -102,6 +114,7 @@ export const BIO_THEMES: Record<BioThemeId, BioTheme> = {
       linkIcon: "bg-white",
       linkArrow: "text-white/70",
       focus: "focus-visible:outline-white",
+      card: "sm:ring-1 sm:ring-white/10 sm:shadow-[0_40px_100px_-40px_rgba(20,78,227,0.45),0_24px_60px_-24px_rgba(0,0,0,0.85)]",
       footer: `${glass} bg-white/[0.06] text-white/70 ring-white/10 hover:bg-white/[0.1] hover:text-white`,
       placeholder: "border-white/15 text-white/50",
       miniLine: "bg-white/75",
@@ -127,6 +140,12 @@ export const BIO_THEMES: Record<BioThemeId, BioTheme> = {
       "radial-gradient(ellipse 65% 45% at 4% 96%, rgba(99,102,241,0.38), transparent 70%)",
       "linear-gradient(165deg, #05161d 0%, #0a1026 55%, #0d0a24 100%)",
     ].join(", "),
+    room: [
+      "radial-gradient(ellipse 45% 40% at 6% 6%, rgba(16,185,129,0.16), transparent 70%)",
+      "radial-gradient(ellipse 42% 38% at 94% 10%, rgba(139,92,246,0.16), transparent 70%)",
+      "radial-gradient(ellipse 45% 38% at 10% 96%, rgba(99,102,241,0.12), transparent 70%)",
+      "#040a12",
+    ].join(", "),
     grain: 0.08,
     classes: {
       name: "text-white",
@@ -140,6 +159,7 @@ export const BIO_THEMES: Record<BioThemeId, BioTheme> = {
       linkIcon: "bg-white",
       linkArrow: "text-emerald-100/80",
       focus: "focus-visible:outline-emerald-200",
+      card: "sm:ring-1 sm:ring-white/10 sm:shadow-[0_40px_100px_-40px_rgba(16,185,129,0.35),0_24px_60px_-24px_rgba(2,6,23,0.9)]",
       footer: `${glass} bg-white/[0.07] text-emerald-50/75 ring-white/12 hover:bg-white/[0.12] hover:text-white`,
       placeholder: "border-emerald-100/20 text-emerald-50/55",
       miniLine: "bg-white/75",
@@ -162,6 +182,11 @@ export const BIO_THEMES: Record<BioThemeId, BioTheme> = {
       "radial-gradient(ellipse 55% 35% at 0% 20%, rgba(168,85,247,0.28), transparent 70%)",
       "linear-gradient(180deg, #1a0a2e 0%, #33104f 30%, #6b1a5e 58%, #a8325f 82%, #d4564f 100%)",
     ].join(", "),
+    room: [
+      "radial-gradient(ellipse 70% 40% at 50% 112%, rgba(226,87,76,0.30), transparent 72%)",
+      "radial-gradient(ellipse 40% 35% at 8% 12%, rgba(168,85,247,0.14), transparent 70%)",
+      "linear-gradient(180deg, #0d0518 0%, #160822 60%, #24091f 100%)",
+    ].join(", "),
     grain: 0.09,
     classes: {
       name: "text-white",
@@ -176,6 +201,7 @@ export const BIO_THEMES: Record<BioThemeId, BioTheme> = {
       linkIcon: "bg-white",
       linkArrow: "text-rose-100/80",
       focus: "focus-visible:outline-amber-200",
+      card: "sm:ring-1 sm:ring-white/12 sm:shadow-[0_40px_100px_-40px_rgba(251,113,133,0.45),0_24px_60px_-24px_rgba(20,3,18,0.9)]",
       footer: `${glass} bg-[#2b0b33]/45 text-rose-50/85 ring-white/15 hover:bg-[#2b0b33]/60 hover:text-white`,
       placeholder: "border-rose-100/25 text-rose-50/60",
       miniLine: "bg-white/80",
@@ -200,6 +226,11 @@ export const BIO_THEMES: Record<BioThemeId, BioTheme> = {
       "radial-gradient(ellipse 90% 40% at 50% 110%, rgba(14,165,233,0.25), transparent 70%)",
       "linear-gradient(180deg, #08324f 0%, #0a2647 40%, #071c38 72%, #04122a 100%)",
     ].join(", "),
+    room: [
+      "radial-gradient(ellipse 55% 35% at 50% -8%, rgba(56,189,248,0.18), transparent 70%)",
+      "radial-gradient(ellipse 40% 38% at 96% 88%, rgba(37,99,235,0.16), transparent 70%)",
+      "linear-gradient(180deg, #041a2c 0%, #03111f 100%)",
+    ].join(", "),
     grain: 0.07,
     classes: {
       name: "text-white",
@@ -213,6 +244,7 @@ export const BIO_THEMES: Record<BioThemeId, BioTheme> = {
       linkIcon: "bg-white",
       linkArrow: "text-sky-100/80",
       focus: "focus-visible:outline-cyan-200",
+      card: "sm:ring-1 sm:ring-white/12 sm:shadow-[0_40px_100px_-40px_rgba(56,189,248,0.35),0_24px_60px_-24px_rgba(1,8,18,0.9)]",
       footer: `${glass} bg-white/[0.08] text-sky-50/80 ring-white/15 hover:bg-white/[0.14] hover:text-white`,
       placeholder: "border-sky-100/25 text-sky-50/55",
       miniLine: "bg-white/80",
@@ -235,6 +267,10 @@ export const BIO_THEMES: Record<BioThemeId, BioTheme> = {
       "radial-gradient(ellipse 70% 40% at 50% 0%, rgba(20,78,227,0.07), transparent 70%)",
       "linear-gradient(180deg, #ffffff 0%, #f8f9fb 45%, #f1f3f7 100%)",
     ].join(", "),
+    room: [
+      "radial-gradient(rgba(11,16,27,0.09) 1px, transparent 1.5px) 0 0 / 22px 22px",
+      "linear-gradient(180deg, #e9ecf2 0%, #e1e5ec 100%)",
+    ].join(", "),
     grain: 0,
     classes: {
       name: "text-[#0b101b]",
@@ -249,6 +285,7 @@ export const BIO_THEMES: Record<BioThemeId, BioTheme> = {
       linkIcon: "bg-[#f1f3f7]",
       linkArrow: "text-[#144ee3]",
       focus: "focus-visible:outline-[#144ee3]",
+      card: "sm:ring-1 sm:ring-[#0b101b]/[0.06] sm:shadow-[0_32px_80px_-36px_rgba(11,16,27,0.35),0_8px_24px_-12px_rgba(11,16,27,0.12)]",
       footer:
         "bg-white text-[#5b6170] shadow-[0_0_0_1px_rgba(11,16,27,0.08),0_1px_2px_rgba(11,16,27,0.05)] hover:text-[#0b101b]",
       placeholder: "border-[#0b101b]/15 text-[#5b6170]",
@@ -274,6 +311,11 @@ export const BIO_THEMES: Record<BioThemeId, BioTheme> = {
       "radial-gradient(ellipse 60% 40% at 96% 100%, rgba(21,128,61,0.36), transparent 70%)",
       "linear-gradient(180deg, #0d2a1f 0%, #0a2219 45%, #06170f 100%)",
     ].join(", "),
+    room: [
+      "radial-gradient(ellipse 45% 40% at 10% 6%, rgba(74,222,128,0.12), transparent 70%)",
+      "radial-gradient(ellipse 45% 40% at 92% 96%, rgba(21,128,61,0.18), transparent 70%)",
+      "#040f0a",
+    ].join(", "),
     grain: 0.09,
     classes: {
       name: "text-[#f0fdf4]",
@@ -287,6 +329,7 @@ export const BIO_THEMES: Record<BioThemeId, BioTheme> = {
       linkIcon: "bg-white",
       linkArrow: "text-lime-100/80",
       focus: "focus-visible:outline-lime-200",
+      card: "sm:ring-1 sm:ring-white/10 sm:shadow-[0_40px_100px_-40px_rgba(74,222,128,0.28),0_24px_60px_-24px_rgba(0,0,0,0.85)]",
       footer: `${glass} bg-white/[0.07] text-green-50/75 ring-white/12 hover:bg-white/[0.12] hover:text-white`,
       placeholder: "border-green-100/20 text-green-50/55",
       miniLine: "bg-white/75",
