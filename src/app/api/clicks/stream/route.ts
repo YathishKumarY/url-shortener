@@ -1,13 +1,17 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/api-auth";
+import { nextPollDelay, POLL_MIN_MS, resumePoint, sleep } from "@/lib/live-stream";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
-const POLL_MS = 2000;
 const HEARTBEAT_MS = 15_000;
-/** Close after a while; EventSource reconnects on its own with Last-Event-ID. */
-const MAX_STREAM_MS = 5 * 60_000;
+/**
+ * Close after a while; EventSource reconnects on its own with Last-Event-ID.
+ * Kept under Vercel's 300-second function limit: at exactly 5 minutes the
+ * platform killed the stream first and logged a timeout error every time.
+ */
+const MAX_STREAM_MS = 270_000;
 
 const clickSelect = {
   id: true,
@@ -64,9 +68,9 @@ export async function GET(request: Request) {
     }
   }
 
-  const lastEventId = request.headers.get("last-event-id");
-  const resumeFrom =
-    lastEventId && !Number.isNaN(Date.parse(lastEventId)) ? new Date(lastEventId) : null;
+  // EventSource sends Last-Event-ID when it reconnects by itself; the page
+  // passes `since` when it reopens the stream after the tab was hidden.
+  const resumeFrom = resumePoint(request.headers.get("last-event-id"), searchParams.get("since"));
   const encoder = new TextEncoder();
   const startedAt = Date.now();
 
@@ -74,6 +78,7 @@ export async function GET(request: Request) {
     async start(controller) {
       let cursor = resumeFrom ?? new Date();
       let lastBeat = Date.now();
+      let delay = POLL_MIN_MS;
       let closed = false;
       const send = (chunk: string) => {
         if (!closed) controller.enqueue(encoder.encode(chunk));
@@ -104,14 +109,16 @@ export async function GET(request: Request) {
             );
             cursor = click.timestamp;
           }
+          delay = nextPollDelay(delay, clicks.length > 0);
           if (Date.now() - lastBeat > HEARTBEAT_MS) {
             send(`: heartbeat\n\n`);
             lastBeat = Date.now();
           }
         } catch (err) {
           console.error("[stream] poll failed:", err);
+          delay = nextPollDelay(delay, false);
         }
-        await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+        await sleep(Math.min(delay, MAX_STREAM_MS - (Date.now() - startedAt)), request.signal);
       }
       close();
     },

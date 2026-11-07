@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -44,6 +44,20 @@ function useNow(interval = 5000) {
     return () => clearInterval(id);
   }, [interval]);
   return now;
+}
+
+function subscribeVisibility(onChange: () => void) {
+  document.addEventListener("visibilitychange", onChange);
+  return () => document.removeEventListener("visibilitychange", onChange);
+}
+
+/** Whether this tab is the one the person is looking at. */
+function useDocumentVisible() {
+  return useSyncExternalStore(
+    subscribeVisibility,
+    () => document.visibilityState === "visible",
+    () => true,
+  );
 }
 
 /** Clicks per minute over the last half hour, from the events we hold. */
@@ -112,14 +126,28 @@ export default function ClickStreamPage() {
     if (initial) setEvents(initial);
   }, [initial]);
 
+  // Newest click this page has shown, so a reopened stream can catch up.
+  const lastSeen = useRef<string | null>(null);
+  useEffect(() => {
+    const newest = events[0]?.timestamp;
+    if (newest && (!lastSeen.current || newest > lastSeen.current)) lastSeen.current = newest;
+  }, [events]);
+
+  // Every open stream polls the database, so a tab in the background lets go
+  // of it and catches up on what it missed when it is shown again.
+  const visible = useDocumentVisible();
+
   useEffect(() => {
     if (paused) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setConnection("paused");
       return;
     }
+    if (!visible) return;
     setConnection("connecting");
-    const source = new EventSource(`/api/clicks/stream?includeBots=${includeBots}`);
+    const params = new URLSearchParams({ includeBots: String(includeBots) });
+    if (lastSeen.current) params.set("since", lastSeen.current);
+    const source = new EventSource(`/api/clicks/stream?${params}`);
     source.onopen = () => setConnection("live");
     source.onerror = () =>
       setConnection(source.readyState === EventSource.CLOSED ? "offline" : "connecting");
@@ -133,7 +161,7 @@ export default function ClickStreamPage() {
       );
     });
     return () => source.close();
-  }, [paused, includeBots]);
+  }, [paused, includeBots, visible]);
 
   const status = {
     connecting: { label: "Connecting...", dot: "bg-amber-400" },
